@@ -1,0 +1,120 @@
+.navbar
+{
+  margin: 0 0 20px 0;
+  border-bottom: 1px solid #EEE;
+  border-radius: 0;
+  background-color: #0D0D0D;
+  padding: 10px 20px;
+}
+a.navbar-brand
+{
+  font-size: 200%;
+}
+.navbar-inverse .navbar-brand,
+.navbar-inverse .navbar-text
+{
+  color: #ddd;
+}
+.navbar img
+{
+  float:left;
+  height: 50px;
+}
+
+.list-group-item {
+    cursor:grab;
+}
+
+.nav, .pagination, .carousel, .panel-title a { cursor: pointer; }
+
+/* test-list */
+.test-list td.test-name {
+    cursor: pointer;
+}
+
+.question
+{
+  margin: 1em;
+  border: 1px solid #eee;
+  border-radius: 3px;
+  padding: 1em;
+}
+.question.viewMode:hover
+{
+  cursor: pointer;
+}
+.question.editMode
+{
+  background: #eee;
+}
+div.choice:before
+{
+  content: "\2610  ";
+}
+
+.btn
+{
+  margin: 0.3em;
+}
+.form-group
+{
+  margin: 1em 0;
+}
+label input, label div[contenteditable]
+{
+  font-weight:normal
+}
+div.rt-container div[contenteditable]
+{
+  min-height: 20ex;
+  min-width: 80ex;
+  /* padding: 0.4ex; */
+}
+
+.dnd-handle
+{
+  cursor: move;
+}
+.dnd-dropzone
+{
+}
+.dnd-dropzone.dnd-eligible
+{
+  min-height: 2em;
+  border: 1px dashed #ddd;
+  background-color: #eee;
+}
+.dnd-dropzone.dnd-eligible.dnd-over
+{
+  background-color: #ddd;
+}
+
+/* Alerts */
+.alert-container {
+    position: fixed;
+    z-index: 10000;
+    top: 30px;
+    left: 30px;
+    right: 30px;
+}
+
+.alert-container .alert {
+    width: 100%;
+}
+
+
+/**
+ * Search questions
+ */
+.panel-heading form .form-group:last-child {
+    margin-bottom: 0;
+}
+
+/**
+ * Question list
+ */
+
+.question-list .panel-body {
+    padding: 0;
+}
+

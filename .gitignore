@@ -1,0 +1,10 @@
+/server/data
+/server/state
+/server/upload
+/server/download
+*.swp
+dist
+/server/config.yaml
+.cabal-sandbox
+cabal.sandbox.config
+LICENSE

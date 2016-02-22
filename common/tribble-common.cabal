@@ -1,0 +1,38 @@
+name:                tribble-common
+version:             0.1.0.0
+-- synopsis:            
+-- description:         
+-- license:             
+license-file:        LICENSE
+author:              Arie Peterson
+maintainer:          ariep@xs4all.nl
+category:            Web
+build-type:          Simple
+cabal-version:       >= 1.10
+
+library
+  exposed-modules:
+    Components
+    Types
+    Types.Dated
+    Types.Labelled
+  -- other-modules:       
+  -- other-extensions:    
+  build-depends:
+    base >= 4.8 && < 4.9
+    , bytestring >= 0.10 && < 0.11
+    , Coroutine >= 0.2 && < 0.3
+    , containers >= 0.5 && < 0.6
+    , ID >= 0.1 && < 0.2
+    , lens >= 4.12 && < 4.14
+    , pandoc >= 1.13 && < 1.17
+    , plug-common >= 0.1 && < 0.2
+    , safecopy >= 0.9 && < 0.10
+    , text >= 1.2 && < 1.3
+    , time >= 1.5 && < 1.6
+    , transformers >= 0.4 && < 0.5
+    , network-uri >= 2.6 && < 2.7
+  hs-source-dirs:      src
+  default-language:    Haskell2010
+  default-extensions:
+    DeriveGeneric

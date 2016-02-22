@@ -1,0 +1,13 @@
+interface
+• drag and drop questions from list to test
+• create new text element in test
+
+• upload and download dir only when in (correct) session
+
+v websocket problem on reload
+• look into compression of ghcjs output
+• loading indicator
+• remove 'code=…' from URL after login
+
+• use 'Data.Reflex.Dynamic.Demux' for the channel selection
+
