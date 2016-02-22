@@ -34,26 +34,27 @@ import Reflex.Dom.Contrib.Utils (alertEvent)
 
 questions :: (MonadWidget t m, MonadIO (PushM t))
   => CurrentTest t -> Make t m [ID.WithID (Decorated Question)]
-questions currentTest = divClass "questions element" $ do
-  el "h2" $ text "Vragen"
-  newQuestion
-  questions <- getDyn (Ch.list crudQuestions) []
-  qs <- do
-    qFilter <- el "label" $ do
-      text "Filter:"
-      editText Text.empty
-    qIDs <- sendManyReceipt filterQuestions (updated qFilter)
-    filteredQuestions <- holdDynInit questions $ attachDynWith
-      (flip filterIDs) questions qIDs
-    both <- combineDyn (,) filteredQuestions questions
-    combineDyn (\ (fqs, qs) f -> if Text.null f then qs else fqs) both qFilter
-  simpleList qs $ listQuestion currentTest
+questions currentTest = divClass "panel panel-default" $ do
+  divClass "panel-heading" $ el "h4" $ text "Vragen"
+  questions <- divClass "panel-body" $ do
+    questions <- getDyn (Ch.list crudQuestions) []
+    qs <- do
+      qFilter <- editTextPlaceholder $ Text.pack "Zoek binnen alle vragen"
+      qIDs <- sendManyReceipt filterQuestions (updated qFilter)
+      filteredQuestions <- holdDynInit questions $ attachDynWith
+        (flip filterIDs) questions qIDs
+      both <- combineDyn (,) filteredQuestions questions
+      combineDyn (\ (fqs, qs) f -> if Text.null f then qs else fqs) both qFilter
+    elClass "table" "table" . el "tbody" $ simpleList qs $
+      el "tr" . listQuestion currentTest
+    return questions
+  divClass "panel-footer" $ newQuestion
   return questions
 
 newQuestion :: forall t m. (MonadWidget t m, MonadIO (PushM t))
   => C t m (Event t (ID.ID (Decorated Question)))
 newQuestion = do
-  newQuestionButton <- button "Nieuwe vraag"
+  newQuestionButton <- buttonClass "btn btn-info" "Nieuwe vraag"
   newQuestionE <- dialogue
     newQuestionButton 
     "Annuleer"
@@ -65,6 +66,7 @@ newQuestion = do
         return . Just $ Labelled Set.empty dq
   sendManyReceipt (Ch.create crudQuestions) decQ
 
+-- maybe no longer necessary?
 editQuestion :: forall t m. (MonadWidget t m, MonadIO (PushM t))
   => Event t (ID.WithID (Decorated Question))
   -> C t m (Event t ())
@@ -77,14 +79,15 @@ editQuestion open = do
 questionForm :: forall t m. (MonadWidget t m, MonadIO (PushM t))
   => Edit t m Question
 questionForm q = do
-  text "Vraag:"
-  question <- mapDyn htmlToRt =<< editRichText (rtToHtml $ view question q)
-  answer <- tabs
-    [ Tab "Open" (is _Open $ view answer q) $ do
+  question <- divClass "form-group" . el "label" $ do
+    text "Vraag:"
+    mapDyn htmlToRt =<< editRichText (rtToHtml $ view question q)
+  answer <- divClass "form-group" $ tabs
+    [ Tab "Open" (is _Open $ view answer q) . el "label" $ do
       text "Antwoord:"
       mapDyn (Open . htmlToRt) =<< editRichText
         (maybe "" rtToHtml $ preview (answer . _Open) q)
-    , Tab "Meerkeuze" (is _MultipleChoice $ view answer q) $ do
+    , Tab "Meerkeuze" (is _MultipleChoice $ view answer q) . el "label" $ do
       text "Antwoorden:"
       mapDyn (review _MultipleChoice) =<< editMultipleChoice
         (maybe ([], []) id $ preview (answer . _MultipleChoice) q)
@@ -105,10 +108,10 @@ questionForm q = do
         $ \ k c _changed -> el "div" $ do
           dc <- editChoice (k > length initialChoices) c
           inputChange <- (Map.singleton k Nothing <$) <$>
-            buttonClass "small" "-"
+            buttonClass "btn btn-default btn-xs" "-"
           return (dc, inputChange)
 
-    newChoice <- buttonClass "small" "+"
+    newChoice <- buttonClass "btn btn-default btn-xs" "+"
     newKey <- mapDyn (+ length initialChoices) =<< count newChoice
     let addChoice = attachDynWith
           (\ k () -> Map.singleton k $ Just emptyChoice) newKey newChoice
@@ -124,11 +127,10 @@ questionForm q = do
     editChoice autoFocus (iCorrect, iText) = do
       correct <- mdo
         correct <- toggle iCorrect click
-        (e, ()) <- elAttr' "span" (Map.singleton "class" "button") $
+        click <- buttonClassM "btn btn-default btn-xs" $
           dynText =<< mapDyn (\case
             True  -> "✓"
             False -> "✗") correct
-        let click = domEvent Click e
         return correct
       (dString, e) <- editText' $ renderPlain iText
       when autoFocus $ focus e
@@ -138,25 +140,27 @@ questionForm q = do
 
 listQuestion :: (MonadWidget t m, MonadIO (PushM t))
   => CurrentTest t -> Dynamic t (ID.WithID (Decorated Question)) -> C t m ()
-listQuestion currentTest dynQ = elClass "div" "question" $ do
+listQuestion currentTest dynQ = do
   l <- mapDyn ID._object dynQ
   dynI <- mapDyn ID.__ID dynQ
-  dynText =<< mapDyn (Text.unpack . view (undecorated . title . titleText)) l
-  buttonClass "smallRight" "×" >>= confirm
-    "Weet je zeker dat je deze vraag wilt wissen?"
-    "Annuleer"
-    "Wis"
-    >>= sendMany (Ch.delete crudQuestions) . tagDyn dynI
-  buttonClass "smallRight" "✎" >>= editQuestion . tagDyn dynQ
-  forDynM dynI $ \ i -> forDynM currentTest $ \case
-    Just t | not $ i `elem` toListOf
-      (ID.object . undecorated . elements . traverse . _TestQuestion) t -> do
-      addE <- buttonClass "smallRight" "+"
-      changedTest <- combineDyn addQuestion dynQ currentTest
-      let changedTestE = fmapMaybe id $ tagDyn changedTest addE
-      sendMany (Ch.update crudTests) changedTestE
-      blank
-    _ -> blank
+  el "td" . dynText =<<
+    mapDyn (Text.unpack . view (undecorated . title . titleText)) l
+  elClass "td" "text-right" $ do
+    forDynM dynI $ \ i -> forDynM currentTest $ \case
+      Just t | not $ i `elem` toListOf
+        (ID.object . undecorated . elements . traverse . _TestQuestion) t -> do
+        addE <- buttonClass "btn btn-default btn-sm" "+"
+        changedTest <- combineDyn addQuestion dynQ currentTest
+        let changedTestE = fmapMaybe id $ tagDyn changedTest addE
+        sendMany (Ch.update crudTests) changedTestE
+        blank
+      _ -> blank
+    buttonClass "btn btn-default btn-sm" "✎" >>= editQuestion . tagDyn dynQ
+    buttonClass "btn btn-default btn-sm" "×" >>= confirm
+      "Weet je zeker dat je deze vraag wilt wissen?"
+      "Annuleer"
+      "Wis"
+      >>= sendMany (Ch.delete crudQuestions) . tagDyn dynI
   blank
  where
   addQuestion :: ID.WithID (Decorated Question)
@@ -176,7 +180,7 @@ editRichText html = el "div" $ do
     (Just $ \ open -> dialogue open "Annuleren" "Kiezen" blank $ \ () -> do
       url <- divClass "imageSelect" $ do
         f <- file
-        upload <- button "Upload"
+        upload <- buttonClass "btn btn-success" "Upload"
         ws <- ask
         sendFileReceipt uploadImage $ onlySingle $ tagDyn f upload
       dUrl <- holdDyn (Left "No image uploaded") $ Right <$> url

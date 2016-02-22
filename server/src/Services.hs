@@ -54,10 +54,9 @@ crud :: forall a. (SafeCopy a, Typeable a, Show a)
   [S.ServedChannel]
 crud state notify t _ =
   [ S.ServeChannel (Ch.list t :: Ch.Channel (Ch.List a)) $ Co.repeat $
-      Co.pre  (liftIO (putStrLn "retrieving list") >> dbRun state False DB.getAll :: S.M [ID.WithID a]) $ \ ls ->
+      Co.pre  (dbRun state False DB.getAll :: S.M [ID.WithID a]) $ \ ls ->
       Co.put ls Co.>>
-      -- Co.pre_ (liftIO $ Notify.wait notify)
-      Co.pre_ (liftIO $ putStrLn "waiting" >> Notify.wait notify >> putStrLn "waited")
+      Co.pre_ (liftIO $ Notify.wait notify)
       Co.close
   , S.ServeChannel (Ch.delete t :: Ch.Channel (Ch.Delete a)) $ Co.repeat $
       Co.get Co.>>= \ i ->

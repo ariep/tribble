@@ -2,12 +2,13 @@ module Test where
 
 import Common
 import Components
-import Question (editQuestion)
+import Question (editQuestion, questionForm)
 import Types
 
 import qualified Web.Channel as Ch
 import Web.Channel.Client (sendMany, sendManyReceipt, get, getDyn, sendFileReceipt)
 import Web.Widgets
+import Web.Widgets.DragAndDrop
 import Web.Widgets.Edit
 
 import           Control.Concurrent.MVar (newMVar, readMVar, modifyMVar_)
@@ -22,7 +23,7 @@ import qualified Data.Set                 as Set
 import qualified Data.Text                as Text
 import           GHCJS.DOM               (currentWindow)
 import           GHCJS.DOM.DataTransfer  (setData, getData)
-import           GHCJS.DOM.Element       (mouseUp, mouseDown, dragStart, dragEnter, dragLeave, dragOver, drop, getElementsByClassName, setAttribute)
+import           GHCJS.DOM.Element       (mouseUp, mouseDown, setAttribute)
 import           GHCJS.DOM.EventM        (on, event, preventDefault, target)
 import           GHCJS.DOM.MouseEvent    (getDataTransfer)
 import           GHCJS.DOM.Node          (Node, contains, getNodeName, getNodeType, getNodeValue)
@@ -32,18 +33,103 @@ import           GHCJS.DOM.Window        (getLocalStorage)
 import           Reflex.Dom
 import           Reflex.Dom.Contrib.Widgets.Common
 
-import Prelude hiding (drop)
+-- schedulePostBuild: useful for focus on multiple choice options?
 
+displayTest :: (MonadWidget t m, MonadIO (PushM t)) =>
+  CurrentQuestions t -> C t m (CurrentTest t)
+displayTest qs = divClass "panel panel-default" $ do
+  currentTest <- divClass "panel-heading" $ tests
+  forDynM_ currentTest . maybe blank $ \ t -> do
+    divClass "panel-body" $ do
+      dnd <- dragAndDrop
+      let test = view (ID.object . undecorated) t
+      let tElements = map (displayElement currentTest dnd) .
+            zip [0 :: Int ..] . view elements $ test
+      let dndFilter dragI dropI = dragI /= dropI && succ dragI /= dropI
+          dropzones = map (dropzoneFilter dnd dndFilter)
+            [0 .. length tElements]
+      dndE <- fmap leftmost . sequence . concat . transpose $
+        [dropzones, map (>> return never) tElements]
+      changedTest <- sendMany (Ch.update crudTests) $ fmapMaybe id $
+        attachDynWith moveQuestion currentTest dndE
+      blank
+    divClass "panel-footer" $ exportButton t >> blank
+  return currentTest
+ where
+  displayElement currentTest dnd (i, te) = mdo
+    (e, d) <- elDynAttr' "div" attrs $ toggleModes
+      (viewMode te >> return (domEvent Click e))
+      (editMode e i te)
+    attrs <- flip mapDyn d $ Map.singleton "class" . \case
+      True  -> "question viewMode"
+      False -> "question editMode"
+    return ()
+   where
+    viewMode (TestText rt)    = html $ rtToHtml rt
+    viewMode (TestQuestion i) = mapDyn (find ((==) i . ID.__ID)) qs
+      >>= \ qD -> forDynM_ qD $ maybe (text "Question not found") $
+        displayQuestion . view (ID.object . undecorated)
+    editMode e i (TestText rt)      = html (rtToHtml rt) >> return never
+    editMode e i (TestQuestion qId) = mapDyn (find ((==) qId . ID.__ID)) qs
+      >>= \ qD -> forDynEvent qD $ maybe (text "Question not found" >> return never) $ \ q -> do
+        dragHandle dnd i
+        newQ <- editLens (ID.object . undecorated) questionForm q
+        cancelE <- buttonClass "btn btn-default" "Annuleer"
+        savedE <- buttonClass "btn btn-success" "Sla op"
+          >>= sendMany (Ch.update crudQuestions) . tagDyn newQ
+        do
+          removeE <- buttonClass "btn btn-default" "Haal weg uit toets"
+          changedTest <- mapDyn (removeQuestion i) currentTest
+          sendMany (Ch.update crudTests) $
+            fmapMaybe id $ tagDyn changedTest removeE
+        return $ leftmost [cancelE, savedE]
+  displayQuestion q = do
+    divClass "questionText" $ html . rtToHtml $ view question q
+    divClass "questionAnswer" $ case view answer q of
+      Open a                -> blank
+      a@(MultipleChoice {}) -> for_ (view choices a `orderBy` view order a) $
+        \ (_correct, rt) -> divClass "choice" $ html . rtToHtml $ rt
+  removeQuestion :: Int
+    -> Maybe (ID.WithID (Decorated Test))
+    -> Maybe (ID.WithID (Decorated Test))
+  removeQuestion i = over (mapped . ID.object . undecorated . elements) $
+    (\ xs -> take i xs ++ drop (succ i) xs)
+  moveQuestion :: Maybe (ID.WithID (Decorated Test)) -> (Int, Int) ->
+    Maybe (ID.WithID (Decorated Test))
+  moveQuestion t (i, j) = over (mapped . ID.object . undecorated . elements)
+    (moveListElement i j) t
+  exportButton t = do
+    exportWindow <- buttonClass "btn btn-info" "Exporteer"
+    modal exportWindow $ \ () -> do
+      el "h3" $ text "Exporteer toets"
+      mode <- selectFromInitial OnlyQuestions
+        (constDyn [OnlyQuestions, WithAnswers])
+        (dynText <=< mapDyn showMode)
+      format <- divClass "formpart" $ text "Formaat:" >> selectFromInitial PDF
+        (constDyn [PDF, Word, LaTeX, Show])
+        (dynText <=< mapDyn show)
+      request <- return (constDyn $ (,,) $ view ID._ID t)
+        >>= combineDyn (flip ($)) mode
+        >>= combineDyn (flip ($)) format
+      cancel <- buttonClass "btn" "Annuleer"
+      export <- tagDyn request <$> buttonClass "btn" "Exporteer"
+      result <- sendManyReceipt exportTest export
+      let url = push (return . either (const Nothing) Just) result
+      el "div" $ dynText =<< holdDyn ""
+        (push (return . either (Just . Text.unpack) (const Nothing)) result)
+      let opened = openExternal url
+      return (opened, cancel)
 
 tests :: (MonadWidget t m, MonadIO (PushM t))
   => C t m (CurrentTest t)
-tests = divClass "tests element" $ mdo
-  showCurrent currentTest
-  newTestE <- newTest
-  pickTestE <- pickTest
+tests = divClass "row" $ mdo
+  divClass "col-md-6" $ showCurrent currentTest
+  testE <- divClass "col-md-6 text-right" $ do
+    newTestE <- newTest
+    pickTestE <- pickTest
+    return $ leftmost [newTestE, pickTestE]
   storageTest <- getStorageTest
-  currentTestID <- holdDyn storageTest $ Just . ID.__ID
-    <$> leftmost [newTestE, pickTestE]
+  currentTestID <- holdDyn storageTest $ Just . ID.__ID <$> testE
   forDynM_ currentTestID $ maybe (return ()) setStorageTest
   currentTest <- combineDyn lookupTest currentTestID
     =<< getDyn (Ch.list crudTests) []
@@ -58,13 +144,12 @@ tests = divClass "tests element" $ mdo
 showCurrent :: (MonadWidget t m)
   => CurrentTest t -> C t m ()
 showCurrent currentTest = forDynM_ currentTest $ maybe blank $ \ t ->
-  elClass "span" "currentTest" $
-    text . Text.unpack $ view (ID.object . undecorated . name) t
+  el "h3" . text . Text.unpack $ view (ID.object . undecorated . name) t
 
 newTest :: (MonadWidget t m, MonadIO (PushM t))
   => C t m (Event t (ID.WithID (Decorated Test)))
 newTest = do
-  newTestButton <- button "Maak een nieuwe toets"
+  newTestButton <- buttonClass "btn btn-info" "Maak een nieuwe toets"
   newTestE <- dialogue newTestButton "Annuleer" "Sla op"
     (el "h3" $ text "Nieuwe toets")
     (\ () -> mapDyn Right =<< testForm emptyTest)
@@ -87,13 +172,13 @@ testForm _t = el "label" $ do
 pickTest :: forall t m. (MonadWidget t m, MonadIO (PushM t))
   => C t m (Event t (ID.WithID (Decorated Test)))
 pickTest = do
-  changeTestButton <- button "Kies een andere toets"
+  changeTestButton <- buttonClass "btn btn-info" "Kies een andere toets"
   tests <- getDyn (Ch.list crudTests) []
   modal changeTestButton $ \ () -> do
     el "h3" $ text "Kies een andere toets"
     pick <- fmap switchPromptlyDyn . mapDyn leftmost =<<
       simpleList tests testChoice
-    cancel <- button "Annuleer"
+    cancel <- buttonClass "btn" "Annuleer"
     return (pick, cancel)
  where
   testChoice :: Dynamic t (ID.WithID (Decorated Test))
@@ -108,98 +193,22 @@ pickTest = do
 type CurrentQuestions t
   = Dynamic t [ID.WithID (Decorated Question)]
 
--- schedulePostBuild: useful for focus on multiple choice options?
 
-displayTest :: (MonadWidget t m, MonadIO (PushM t)) =>
-  CurrentTest t -> CurrentQuestions t -> C t m ()
-displayTest currentTest qs = forDynM_ currentTest . maybe blank $ \ t -> do
-  let test = view (ID.object . undecorated) t
-  let tElements = map displayElement . zip [0 :: Int ..] . view elements $ test
-  let dropzones = map dropzone [0 .. length tElements]
-  sequence_ . concat . transpose $ [dropzones, tElements]
-  exportButton t
-  blank
- where
-  showMode :: ExportMode -> String
-  showMode OnlyQuestions = "Toets"
-  showMode WithAnswers   = "Antwoorden"
-  displayElement (i, te) = do
-    (e, ()) <- elAttr' "div" (Map.singleton "class" "testElement")
-      $ case te of
-        TestText rt    -> html $ rtToHtml rt
-        TestQuestion i -> do
-          qD <- mapDyn (find ((==) i . ID.__ID)) qs
-          forDynM_ qD $ maybe (text "Question not found") $ \ q -> do
-            do
-              removeE <- buttonClass "smallRight" "−"
-              changedTest <- mapDyn (removeQuestion i) currentTest
-              sendMany (Ch.update crudTests) $
-                fmapMaybe id $ tagDyn changedTest removeE
-            buttonClass "smallRight" "✎" >>= editQuestion . (q <$)
-            divClass "dnd-handle" $ text "↕"
-            displayQuestion . view (ID.object . undecorated) $ q
-    (consumeEvent =<<) . wrapDomEvent (_el_element e) (`on` mouseDown) $ do
-      t :: Maybe Node <- target
-      Just nl <- getElementsByClassName (_el_element e) "dnd-handle"
-      Just handle <- item nl 0
-      contains handle t >>= setAttribute (_el_element e) "draggable" . show
-    (consumeEvent =<<) . wrapDomEvent (_el_element e) (`on` dragStart) $ do
-      (event >>= getDataTransfer >>=) . flip for_ $ \ dt ->
-        setData dt "text/plain" $ show i
-  displayQuestion q = do
-    divClass "questionText" $ html . rtToHtml $ view question q
-    divClass "questionAnswer" $ case view answer q of
-      Open a                -> blank
-      a@(MultipleChoice {}) -> for_ (view choices a `orderBy` view order a) $
-        \ (_correct, rt) -> divClass "choice" $ html . rtToHtml $ rt
-  removeQuestion :: ID.ID (Decorated Question)
-    -> Maybe (ID.WithID (Decorated Test))
-    -> Maybe (ID.WithID (Decorated Test))
-  removeQuestion i = over (mapped . ID.object . undecorated . elements) $
-    filter $ \case
-      TestQuestion i' -> i /= i'
-      _               -> True
-  dropzone i = mdo
-    (e, ()) <- elDynAttr' "div" attrs $ blank
-    (consumeEvent =<<) . wrapDomEvent (_el_element e) (`on` dragOver) $
-      preventDefault
-    enterE <- wrapDomEvent (_el_element e) (`on` dragEnter) $ return ()
-    leaveE <- wrapDomEvent (_el_element e) (`on` dragLeave) $ return ()
-    overD <- holdDyn False $ leftmost [True <$ enterE, False <$ leaveE]
-    attrs <- flip mapDyn overD $ (Map.singleton "class") . \case
-      False -> "dnd-dropzone"
-      True  -> "dnd-dropzone dnd-over"
-    (consumeEvent =<<) . wrapDomEvent (_el_element e) (`on` drop) $ do
-      preventDefault
-      (event >>= getDataTransfer >>=) . mapM_ $ \ dt -> do
-        d <- getData dt "text/plain"
-        liftIO . putStrLn $
-          "Move element of index " ++ d ++ " to slot " ++ show i
-  exportButton t = do
-    exportWindow <- button "Exporteer"
-    modal exportWindow $ \ () -> do
-      el "h3" $ text "Exporteer toets"
-      mode <- selectFromInitial OnlyQuestions
-        (constDyn [OnlyQuestions, WithAnswers])
-        (dynText <=< mapDyn showMode)
-      format <- divClass "formpart" $ text "Formaat:" >> selectFromInitial PDF
-        (constDyn [PDF, Word, LaTeX, Show])
-        (dynText <=< mapDyn show)
-      request <- return (constDyn $ (,,) $ view ID._ID t)
-        >>= combineDyn (flip ($)) mode
-        >>= combineDyn (flip ($)) format
-      cancel <- button "Annuleer"
-      export <- tagDyn request <$> button "Exporteer"
-      result <- sendManyReceipt exportTest export
-      let url = push (return . either (const Nothing) Just) result
-      el "div" $ dynText =<< holdDyn ""
-        (push (return . either (Just . Text.unpack) (const Nothing)) result)
-      let opened = openExternal url
-      return (opened, cancel)
+showMode :: ExportMode -> String
+showMode OnlyQuestions = "Toets"
+showMode WithAnswers   = "Antwoorden"
 
 orderBy :: [a] -> AnswerOrder -> [a]
 orderBy l = const l
 -- orderBy l = map (l !!)
+
+moveListElement :: Int -> Int -> [a] -> [a]
+moveListElement i j xs
+  | j <= i    = insertAt j m ys ++ zs
+  | otherwise = ys ++ insertAt (j - i - 1) m zs
+ where
+  (ys, m : zs) = splitAt i xs
+  insertAt i x xs = case splitAt i xs of (ys, zs) -> ys ++ x : zs
 
 getStorageTest :: (MonadWidget t m)
   => m (Maybe (ID.ID (Decorated Test)))

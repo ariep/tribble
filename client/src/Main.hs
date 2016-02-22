@@ -38,22 +38,23 @@ main = mainWidgetWithHead headSection $ do
  where
   page = do
     header
-    divClass "main" $ mdo
-      qs <- questions currentTest
-      currentTest <- tests
-      displayTest currentTest qs
+    divClass "container" . divClass "row" $ mdo
+      currentTest <- divClass "col-md-7 col-lg-8" $ displayTest qs
+      qs <- divClass "col-md-5 col-lg-4" $ questions currentTest
+      return ()
 
 headSection = do
-  -- stylesheet "/style.css"
   stylesheet
     "https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css"
+  stylesheet "/main.css"
  where
   stylesheet s = elAttr "link"
     (Map.fromList [("rel", "stylesheet"), ("href", s)]) $ return ()
 
-header = divClass "header" $ do
-  elAttr "img" (Map.fromList [("src","logo_klein.png")]) blank
-  text "Tribble"
-  divClass "user" $ do
+header = elClass "nav" "navbar navbar-inverse" $ do
+  divClass "navbar-header" $ do
+    elAttr "img" (Map.fromList [("src","logo_klein.png")]) blank
+    linkClass "Tribble" "navbar-brand"
+  divClass "navbar-right" . elClass "p" "navbar-text" $ do
     dynText =<< holdDyn "…" . fmap Text.unpack =<< get showUser
 
