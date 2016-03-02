@@ -1,6 +1,6 @@
 module Imports
   (
-    view
+    view, over, overM
   , when
   , MonadIO, liftIO
   , (<>)
@@ -10,7 +10,8 @@ module Imports
   , Typeable
   ) where
 
-import Control.Lens            (view)
+import Control.Lens            (view, over)
+import Control.Lens.Monadic    (overM)
 import Control.Monad           (when)
 import Control.Monad.IO.Class  (MonadIO, liftIO)
 import Data.Monoid             ((<>))

@@ -50,7 +50,7 @@ executable tribble-server
     , serversession-frontend-wai >= 1.0 && < 1.1
     , TCache >= 0.14 && < 0.15
     , text
-    , text-index >= 0.1 && < 0.2
+    , text-index >= 0.2 && < 0.3
     , time >= 1.5 && < 1.6
     , transformers
     , tst

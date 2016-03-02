@@ -1,7 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Types.Dated
   (
-    Dated(..), dates, withoutDates
+    Dated(..), dates, dated
   , Dates(..), creationDate, modificationDate, deletionDate
   , date
   , isDeleted
@@ -23,8 +23,8 @@ import           GHC.Generics           (Generic)
 data Dated x
   = Dated
     {
-      _dates        :: Dates
-    , _withoutDates :: x
+      _dates :: Dates
+    , _dated :: x
     }
   deriving (Generic, Typeable, Show)
 

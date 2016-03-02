@@ -2,7 +2,27 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
-module DB where
+module DB
+  ( Accounts
+  , Account(Account)
+  , userAccount
+
+  , Stores
+  , Store
+  , initialise
+  , finalise
+  , accountStore
+
+  , idIndex
+  , questionIndex
+  , questionLabelIndex
+  , questionLabelTextIndex
+
+  , DB
+  , run
+  , T.Key
+  , getAll, getAllIDs
+  ) where
 
 import Imports
 import Types
@@ -26,6 +46,7 @@ import qualified Data.TCache.Index      as T
 import qualified Data.TCache.Index.Map  as IndexMap
 import qualified Data.TCache.Index.Text as IndexText
 import qualified Data.Text              as Text
+import qualified Data.Text.Index        as TextIndex
 import qualified Data.TST               as TST
 import           Data.Typeable          (Typeable)
 import           GHC.Generics           (Generic)
@@ -96,6 +117,8 @@ initialiseIndices store = do
   T.index store (idIndex :: IdIndex (Decorated Question))
   T.index store (idIndex :: IdIndex (Decorated Test))
   T.index store questionIndex
+  T.index store questionLabelIndex
+  T.index store questionLabelTextIndex
 
 type IdIndex o
   = IndexMap.Field (ID.WithID o) (ID.ID o)
@@ -104,10 +127,22 @@ idIndex :: IdIndex o
 idIndex = IndexMap.field ID.__ID
 
 questionIndex :: IndexText.Field (ID.WithID (Decorated Question))
-questionIndex = IndexText.fields (g . view (ID.object . undecorated)) where
+questionIndex = IndexText.Fields
+  (g . view (ID.object . undecorated))
+  "contents"
+ where
   g q = renderPlain (view question q) : h (view answer q)
   h (Open r) = [renderPlain r]
   h m        = map (renderPlain . snd) (view choices m)
+
+questionLabelTextIndex :: IndexText.Field (ID.WithID (Decorated Question))
+questionLabelTextIndex = IndexText.Fields
+  (Set.toList . view (ID.object . labels))
+  "labels"
+
+questionLabelIndex :: IndexMap.Fields
+  (ID.WithID (Decorated Question)) [] Label
+questionLabelIndex = IndexMap.fields (Set.toList . view (ID.object . labels))
 
 -- Database
 
@@ -123,6 +158,9 @@ getAll = do
   refs <- traverse T.getDBRefM . Set.toList $ set
   catMaybes <$> T.readDBRefs refs
 
+getAllIDs :: forall a. (SC.SafeCopy a, Typeable a) => DB [ID.ID a]
+getAllIDs = map fst <$> IndexMap.listAll (idIndex :: IdIndex a)
+
 -- Storage
 
 instance (SC.SafeCopy a) => T.Serializable a where
@@ -132,7 +170,7 @@ instance (SC.SafeCopy a) => T.Serializable a where
 instance T.Indexable (Map.Map k v) where
   key = const ""
 
-SC.deriveSafeCopy 0 'SC.base ''Down
+SC.deriveSafeCopy 0 'SC.base ''TextIndex.Weight
 SC.deriveSafeCopy 0 'SC.base ''OrdPSQ.OrdPSQ
 SC.deriveSafeCopy 0 'SC.base ''OrdPSQ.Elem
 SC.deriveSafeCopy 0 'SC.base ''OrdPSQ.LTree

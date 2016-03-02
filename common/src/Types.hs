@@ -3,16 +3,17 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeFamilies #-}
 module Types
-  (
-    Question(..), question, answer, title
+  ( Question(..), question, answer, title
   , emptyQuestion
   , Answer(..), choices, order, _Open, _MultipleChoice
   , Choice, AnswerOrder
   , Title(..), titleText, generated
   , generateTitle
   , Test(..), name, elements
-  , ExportMode(..), Format(..)
   , emptyTest
+  , ExportMode(..), Format(..)
+  , QuestionFilter(..), labelFilter, searchText
+  , emptyFilter
   , TestElement(..), _TestQuestion, _TestText
   , RichText(..), plainText, plainRich, renderPlain, rtToHtml, htmlToRt
   , module Types.Dated
@@ -29,6 +30,7 @@ import           Types.Labelled
 
 import           Control.Lens (makeLenses, makePrisms, Lens', Iso', iso)
 import qualified Data.SafeCopy  as SC
+import qualified Data.Set       as Set
 import           Data.Text      (Text)
 import qualified Data.Text      as Text
 import           Data.Typeable          (Typeable)
@@ -104,6 +106,15 @@ data Format
   | Word
   deriving (Eq, Show)
 
+-- Searching
+
+data QuestionFilter
+  = QuestionFilter
+    { _labelFilter :: Set.Set Label
+    , _searchText  :: Maybe Text
+    }
+  deriving (Generic, Typeable, Show)
+
 -- Empty objects
 
 emptyQuestion :: Question
@@ -116,6 +127,9 @@ emptyQuestion = Question
 
 emptyTest :: Test
 emptyTest = Test Text.empty []
+
+emptyFilter :: QuestionFilter
+emptyFilter = QuestionFilter (Set.empty) Nothing
 
 -- Rich text conversions
 
@@ -161,15 +175,12 @@ makePrisms ''Answer
 makeLenses ''Title
 makeLenses ''Test
 makePrisms ''TestElement
+makeLenses ''QuestionFilter
 
 undecorated :: Lens' (Decorated x) x
-undecorated = withoutLabels . withoutDates
+undecorated = labelled . dated
 
 -- Serialisation
-
--- instance (SC.SafeCopy a) => T.Serializable a where
---   serialize   = C.runPutLazy . SC.safePut
---   deserialize = either error id . C.runGetLazy SC.safeGet
 
 SC.deriveSafeCopy 0 'SC.base ''Pandoc.Format
 SC.deriveSafeCopy 0 'SC.base ''Pandoc.Citation
@@ -189,6 +200,7 @@ SC.deriveSafeCopy 0 'SC.base ''Test
 SC.deriveSafeCopy 0 'SC.base ''TestElement
 SC.deriveSafeCopy 0 'SC.base ''ExportMode
 SC.deriveSafeCopy 0 'SC.base ''Format
+SC.deriveSafeCopy 0 'SC.base ''QuestionFilter
 SC.deriveSafeCopy 0 'SC.base ''Dated
 SC.deriveSafeCopy 0 'SC.base ''Labelled
 SC.deriveSafeCopy 0 'SC.base ''Dates

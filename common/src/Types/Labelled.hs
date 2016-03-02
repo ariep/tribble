@@ -1,7 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Types.Labelled
   (
-    Labelled(..), labels, withoutLabels
+    Labelled(..), labels, labelled
   , Label
   ) where
 
@@ -15,8 +15,8 @@ import           GHC.Generics    (Generic)
 data Labelled x
   = Labelled
     {
-      _labels        :: Set.Set Label
-    , _withoutLabels :: x
+      _labels   :: Set.Set Label
+    , _labelled :: x
     }
   deriving (Generic, Typeable, Show)
 

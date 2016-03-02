@@ -41,11 +41,21 @@ type ExportTest
 exportTest    :: Channel ExportTest
 exportTest    = Channel [5]
 
+-- The rational should be a number between 0 and 1, with higher numbers
+-- denoting better matches.
 type FilterQuestions
-  = Repeat (Text :?: [ID.ID (Decorated Question)] :!: Eps)
+  = Repeat (QuestionFilter :?:
+    [(ID.ID (Decorated Question), Rational)] :!:
+    Eps)
 
 filterQuestions :: Channel FilterQuestions
 filterQuestions = Channel [6]
+
+type QuestionLabels
+  = Repeat (Maybe Text :?: [Label] :!: Eps)
+
+questionLabels :: Channel QuestionLabels
+questionLabels = Channel [7]
 
 
 data ServedFileName
