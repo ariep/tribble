@@ -1,0 +1,9 @@
+# language setting
+language: python
+
+# version numbers
+python:
+    - "3.4"
+
+#command to run tests
+script: ls -l && pwd
