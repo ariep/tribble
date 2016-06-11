@@ -1,0 +1,63 @@
+resolver: lts-5.15
+
+packages:
+- common
+- server
+# - location: /home/arie/dev/web/plug
+- location:
+    git: https://github.com/ariep/plug.git
+    commit: 314a25829b689762622c3e7b4fa34e11432a10e1
+  subdirs:
+    - plug-common
+    - plug-server
+  extra-dep: true
+- location:
+    git: https://github.com/ariep/Coroutine.git
+    commit: 4ece5738cc0e204a9c7a4bd2bfba01b8f482553d
+  extra-dep: true
+# - location: /home/arie/dev/TCache
+- location:
+    git: https://github.com/ariep/TCache.git
+    commit: 8edfe575243cb6f304d5c337cf638565b5eb5cfa
+  extra-dep: true
+- location:
+    git: https://github.com/ariep/ID.git
+    commit: f5ffbb02d3e20feef23fce294946676bbf5d5afc
+  extra-dep: true
+- location:
+    git: https://github.com/ariep/text-index.git
+    commit: c563bd828b5d09b0ed9c4b83762b82c8dec2ee73
+  extra-dep: true
+- location:
+    git: https://github.com/ariep/oauth2-google.git
+    commit: 3845964ca341c5818a8a27369d511739dd749606
+  extra-dep: true
+- location:
+    git: https://github.com/ariep/language-spelling.git
+    commit: 98936c01f0fc0baf35b24e9ae975a5d808123aa3
+  subdirs: [tst]
+  extra-dep: true
+- location:
+    git: https://github.com/ariep/psqueues.git
+    commit: 1b9d87511bce9f5a3e4db6fa46a43dc03a965308
+  extra-dep: true
+- location:
+    git: https://github.com/ariep/configifier.git
+    commit: 6f4421311d08d1755d1487b2153d77715aba8520
+  extra-dep: true
+
+extra-deps:
+  - configifier-0.1.0
+  - cereal-text-0.1.0.1
+  - concurrent-extra-0.7.0.10
+  - console-program-0.4.1.0
+  - directory-1.2.6.3
+  - functor-infix-0.0.3
+  - parsec-extra-0.1.0.5
+
+# Override default flag values for local packages and extra-deps
+flags: {}
+
+# Extra package databases containing global packages
+extra-package-dbs: []
+

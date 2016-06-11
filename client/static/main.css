@@ -21,54 +21,183 @@ a.navbar-brand
   height: 50px;
 }
 
-.list-group-item {
-    cursor:grab;
-}
-
 .nav, .pagination, .carousel, .panel-title a { cursor: pointer; }
 
-/* test-list */
-.test-list td.test-name {
-    cursor: pointer;
+.nav-tabs a
+{
+  padding: 0.2em 0.4em !important;
+}
+
+div.testHeader
+{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
 .question
 {
-  margin: 1em;
-  border: 1px solid #eee;
+  /* margin: 1em; */
+  padding: 0.7em;
+  border: 1px solid transparent;
   border-radius: 3px;
-  padding: 1em;
 }
 .question.viewMode:hover
 {
   cursor: pointer;
+  border: 1px solid #eee;
+  border-radius: 3px;
 }
 .question.editMode
 {
-  background: #eee;
+  padding-top: 0;
+  /* background-color: #f3f3f3; */
+  background-color: rgba(0,0,0,0.1);
 }
-div.choice:before
+ol.multiple-choice
 {
-  content: "\2610  ";
+  list-style-type: lower-alpha;
+}
+/* div.choice:before */
+/* { */
+  /* content: "\2610  "; */
+/* } */
+
+.buttonRow
+{
+  margin: 0.4em 0;
+  display: flex;
+  justify-content: flex-end;
+}
+td.buttonRow
+{
+  /* Ugly hack to fix weird problem with border at top instead of bottom.*/
+  margin: -1px 0;
+}
+.buttonRow button
+{
+  align-self: center;
+}
+.buttonRow .fill
+{
+  flex-grow: 1;
 }
 
-.btn
+div.lr-align
 {
-  margin: 0.3em;
+  display: flex;
+  justify-content: space-between;
+}
+
+.btn + .btn
+{
+  margin-left: 3px;
+}
+.btn.btn-block
+{
+  margin-left: 0;
 }
 .form-group
 {
   margin: 1em 0;
+  /* background-color: rgba(255,255,255,0.3); */
+  /* padding: 0.8em; */
 }
+
+.dropdown-menu
+{
+  position: relative;
+}
+ul.dropdown-menu li
+{
+  cursor: pointer;
+}
+
+div.multi-inline
+{
+  display: inline;
+}
+div.multi-inline > div
+{
+  display: inline;
+}
+
+div.multi > div
+{
+  padding: 0.3em;
+}
+label
+{
+  margin-right: 0.5em;
+}
+.label
+{
+  margin: 0.3em;
+  font-size: 100%;
+}
+
+/* div.multipleChoiceAnswers input */
+input[type=text]
+{
+  display: inline-block;
+  width: 80%;
+  margin-left: 0.6em;
+  margin-right: 0.6em;
+  margin-bottom: 0.3em;
+}
+div.multi button.btn-primary
+{
+  margin-left: 0.8em;
+}
+div.multipleChoiceAnswers button.btn-primary
+{
+  margin-left: 2.7em;
+}
+button.mc-button
+{
+  padding: 0 0.2em;
+  font-size: 115%;
+  font-weight: bold;
+}
+button.mc-false
+{
+  background-color: #ff9090 !important;
+}
+button.mc-true
+{
+  background-color: #90ff90 !important;
+}
+
 label input, label div[contenteditable]
 {
-  font-weight:normal
+  font-weight: normal;
 }
 div.rt-container div[contenteditable]
 {
   min-height: 20ex;
-  min-width: 80ex;
-  /* padding: 0.4ex; */
+  height: auto;
+  width: 100%;
+}
+div.rt-container.panel
+{
+  border: 0;
+  margin-bottom: 0;
+}
+div.rt-container div.panel-header
+{
+  display: flex;
+  justify-content: flex-end;
+  background-color: #f9f9f9;
+}
+
+.modal
+{
+  overflow: auto;
+}
+
+div.imagePreview img
+{
+  max-width: 300px;
 }
 
 .dnd-handle
@@ -80,28 +209,21 @@ div.rt-container div[contenteditable]
 }
 .dnd-dropzone.dnd-eligible
 {
-  min-height: 2em;
+  min-height: 3em;
   border: 1px dashed #ddd;
   background-color: #eee;
+  display: flex;
+  justify-content: center;
+  align-items: center; 
+}
+.dnd-dropzone.dnd-eligible:after
+{
+  content: "Verplaats hierheen";
 }
 .dnd-dropzone.dnd-eligible.dnd-over
 {
-  background-color: #ddd;
+  background-color: #bbb;
 }
-
-/* Alerts */
-.alert-container {
-    position: fixed;
-    z-index: 10000;
-    top: 30px;
-    left: 30px;
-    right: 30px;
-}
-
-.alert-container .alert {
-    width: 100%;
-}
-
 
 /**
  * Search questions

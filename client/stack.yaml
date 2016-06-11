@@ -1,0 +1,55 @@
+resolver: lts-5.15
+compiler: ghcjs-0.2.0.20160414_ghc-7.10.3
+compiler-check: match-exact
+setup-info:
+  ghcjs:
+    source:
+      ghcjs-0.2.0.20160414_ghc-7.10.3:
+        url: https://s3.amazonaws.com/ghcjs/ghcjs-0.2.0.20160414_ghc-7.10.3.tar.gz
+        sha1: 6d6f307503be9e94e0c96ef1308c7cf224d06be3
+
+packages:
+- .
+- ../common
+- location:
+    git: https://github.com/ariep/plug.git
+    commit: 314a25829b689762622c3e7b4fa34e11432a10e1
+# - location: /home/arie/dev/web/plug
+  subdirs:
+    - plug-common
+    - plug-client
+  extra-dep: true
+- location:
+    git: https://github.com/ariep/Coroutine.git
+    commit: 4ece5738cc0e204a9c7a4bd2bfba01b8f482553d
+  extra-dep: true
+- location:
+    git: https://github.com/ariep/ID.git
+    commit: f5ffbb02d3e20feef23fce294946676bbf5d5afc
+  extra-dep: true
+- location:
+    git: https://github.com/reflex-frp/reflex
+    commit: f8338f6b68c9be4e8dcddbbab2098aeffa018535
+  extra-dep: true
+- location:
+    git: https://github.com/ariep/ghcjs-websockets-reflex.git
+    commit: 2b5003c953ead27320a3cfa6bf6ddb638ddd0b60
+  extra-dep: true
+- location:
+    git: https://github.com/reflex-frp/reflex-dom-contrib.git
+    commit: 3c236213f3354242e2852c25233afed6d1d40d48
+  extra-dep: true
+
+extra-deps:
+  - cereal-text-0.1.0.1
+  - ghcjs-dom-0.2.3.1
+  - ref-tf-0.4
+  - string-conv-0.1.1
+  - reflex-dom-0.3
+  # - reflex-dom-contrib-0.4.1
+
+# Override default flag values for local packages and extra-deps
+flags: {}
+
+# Extra package databases containing global packages
+extra-package-dbs: []

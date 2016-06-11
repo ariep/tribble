@@ -1,12 +1,13 @@
 module Export.Pandoc
-  (
-    build
+  ( P.Pandoc
+  , build
   , export
   ) where
 
 import qualified DB
 import           Common
 import           Config
+import           Export.Common (Container, Result)
 import           Imports
 import           Types
 
@@ -21,8 +22,9 @@ import qualified Text.Pandoc.Walk        as P
 import qualified Web.Channel.Server      as S
 
 
-export :: (Monad m) => P.Pandoc -> m (Either ByteString ByteString)
-export = return . Right . utf8ByteString . P.writeNative P.def
+export :: (Monad m) =>
+  Container -> P.Pandoc -> m Result
+export _ = return . Right . utf8ByteString . P.writeNative P.def
 
 build :: ExportMode -> Decorated Test -> DB.DB P.Pandoc
 build mode test = do

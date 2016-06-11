@@ -1,13 +1,68 @@
-interface
-• drag and drop questions from list to test
-• create new text element in test
+bugs
+v websocket problem on reload
+v when deleting a question that is part of a test, the reference is not removed from the test
+v searching for words longer than the chop length gives no results
+v after creating a new question, or deleting a question, the question list is not updated
+v images in exports
 
+architecture
+v keep browser-local cache of questions:
+  v server provides api to let client subscribe to changes
+  · decide what to do when server pushes updates while we are editing
+  · maybe keep track on the server of editing mode, and show this to other users
+  · reflect changes in the cache right away, and send them to the server asynchronously
+    · the acid library or its model seems a good fit here
+    · provide UI to show asynchronous updates in progress
+• use the RW caching mechanism also for tests
+• add (implicit?) exceptions to the client-server communication
+
+speeding up
+v measure time use of server vs. client
+server optimisation
+• memoize serialised version of data on the server
+  · or get it directly from TCache
+client optimisation
+v use 'Data.Reflex.Dynamic.Demux' for the channel selection
+
+interface
+v drag and drop questions in view mode, not edit mode
+v labels
+v limit search results to 25
+v renaming tests
+v new question button at bottom of test
+v deleting questions: only in question list edit mode
+• clone question: only in question list edit mode
+• resize answer text inputs automatically
+• drag and drop: preview dragged element at new position
+• tooltips on buttons
+• create new text element in test
+v show account information below username
+• fix display of default choices in export modal
+• logout link
+• drag and drop questions from list to test
+
+features
+v search term of multiple words
+v general search infrastructure for combining search terms and labels
+v save author of questions and tests
+• decide what to do when a new user logs in:
+  · create a user-specific account?
+  · connect to a test account?
+  · give the user a choice of the above, including asking to be added to an existing account?
+• web interface for user and account maintenance
+
+server
+• remove 'code=…' from URL after login
+• prevent caching of stale test exports
 • upload and download dir only when in (correct) session
 
-v websocket problem on reload
-• look into compression of ghcjs output
-• loading indicator
-• remove 'code=…' from URL after login
-
-• use 'Data.Reflex.Dynamic.Demux' for the channel selection
+deployment
+v create github repo
+v create docker file
+v compression of ghcjs output (gives ~3MB js file)
+v use stack as a build tool for client and server
+• check for existence of config file, client/static, runtime-data
+• fork pandoc to prevent future safecopy problems
+• look further at Wercker
+• loading indicator: Daan
 

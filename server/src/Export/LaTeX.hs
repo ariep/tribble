@@ -1,11 +1,11 @@
 {-# LANGUAGE QuasiQuotes #-}
 module Export.LaTeX
-  (
-    export
+  ( export
   , template
   ) where
 
-import           Common  (utf8ByteString)
+import           Common        (utf8ByteString)
+import           Export.Common (Container, Result)
 import           Imports
 import qualified DB
 import           Types
@@ -17,8 +17,9 @@ import qualified Text.Pandoc           as P
 import qualified Text.Pandoc.Options   as P
 
 
-export:: (Monad m) => P.Pandoc -> m (Either ByteString ByteString)
-export = return . Right . utf8ByteString . P.writeLaTeX
+export :: (Monad m) =>
+  Container -> P.Pandoc -> m Result
+export _ = return . Right . utf8ByteString . P.writeLaTeX
   P.def
     {
       P.writerStandalone   = True

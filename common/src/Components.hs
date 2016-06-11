@@ -13,24 +13,36 @@ import Data.ByteString.Lazy (ByteString)
 import qualified Data.Text   as Text
 import qualified Network.URI as URI
 
+type AllTests
+  = Repeat ([ID.WithID (Decorated Test)] :!: Eps)
+
+allTests :: Channel AllTests
+allTests = Channel [0]
+
 crudTests :: Token (CRUD (Decorated Test))
 crudTests = Token [1]
 
-crudQuestions :: Token (CRUD (Decorated Question))
-crudQuestions = Token [2]
+crudQuestions  :: Token (CRUD (Decorated Question))
+crudQuestions  = Token [2]
 
 
 type UploadImage
   = Repeat (File :?: (String :!: Eps))
 
-uploadImage   :: Channel UploadImage
-uploadImage   = Channel [3]
+uploadImage    :: Channel UploadImage
+uploadImage    = Channel [3]
 
-type ShowUser
-  = Text :!: Eps
+type CurrentUser
+  = ID.WithID User :!: Eps
 
-showUser      :: Channel ShowUser
-showUser      = Channel [4]
+currentUser    :: Channel CurrentUser
+currentUser    = Channel [4]
+
+type CurrentAccount
+  = Repeat (Maybe (ID.WithID Account) :!: Eps)
+
+currentAccount :: Channel CurrentAccount
+currentAccount = Channel [5]
 
 type ExportTest
   = Repeat (
@@ -39,7 +51,7 @@ type ExportTest
     Eps)
 
 exportTest    :: Channel ExportTest
-exportTest    = Channel [5]
+exportTest    = Channel [6]
 
 -- The rational should be a number between 0 and 1, with higher numbers
 -- denoting better matches.
@@ -49,14 +61,15 @@ type FilterQuestions
     Eps)
 
 filterQuestions :: Channel FilterQuestions
-filterQuestions = Channel [6]
+filterQuestions = Channel [7]
 
 type QuestionLabels
   = Repeat (Maybe Text :?: [Label] :!: Eps)
 
 questionLabels :: Channel QuestionLabels
-questionLabels = Channel [7]
+questionLabels = Channel [8]
 
+-- Helper types and functions.
 
 data ServedFileName
   = ServedFileName
@@ -73,10 +86,10 @@ remoteUrl :: ServedFileName -> String
 remoteUrl s = visiblepath s
 
 downloadFile :: String -> ServedFileName
-downloadFile = ServedFileName "./download"
+downloadFile = ServedFileName "./runtime-data/download"
 
 uploadedFile :: String -> ServedFileName
-uploadedFile = ServedFileName "./upload"
+uploadedFile = ServedFileName "./runtime-data/upload"
 
 exportedTest :: ID.ID (Decorated Test) -> ExportMode -> Format ->
   ServedFileName

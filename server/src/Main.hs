@@ -9,6 +9,7 @@ module Main where
 
 import           Common
 import           Config
+import qualified DB
 import           Imports
 import qualified Services
 
@@ -16,6 +17,8 @@ import qualified Web.Channel.Server             as S
 import qualified Web.Channel.Server.Session     as S
 
 import qualified Control.Concurrent.MVar        as MVar
+import qualified Control.Concurrent.STM.TChan   as TChan
+import qualified Control.Concurrent.STM.TVar    as TVar
 import           Control.Exception       (bracket)
 import           Control.Monad           (join, when)
 import qualified Data.Acid.Local                as Acid
@@ -30,6 +33,7 @@ import qualified Network.Wai                    as Wai
 import qualified Network.Wai.Application.Static as Static
 import qualified Network.Wai.Handler.Warp       as Warp
 import qualified Network.Wai.Session            as Wai
+import           System.Environment      (getArgs)
 import qualified WaiAppStatic.Types             as Wai
 import qualified Web.OAuth2.Google              as OAuth
 import qualified Web.ServerSession.Core         as Session
@@ -45,7 +49,7 @@ main = do
   withStorage $ \ storage -> do
     (sessionState, static) <- setup config storage
     app <- S.application
-      (S.Config sessionState host)
+      (S.Config sessionState host $ newLocalState state)
       <$> Services.channels state
     Warp.runSettings
       (Warp.setPort port Warp.defaultSettings)
@@ -56,7 +60,8 @@ type SD
 
 withStorage :: (Acid.AcidStorage SD -> IO a) -> IO a
 withStorage = bracket
-  (Acid.AcidStorage <$> Acid.openLocalState Acid.emptyState)
+  (Acid.AcidStorage <$>
+    Acid.openLocalStateFrom "./runtime-data/sessions" Acid.emptyState)
   (Acid.createCheckpointAndClose . Acid.acidState)
 
 setup :: Tagged Config -> Acid.AcidStorage SD ->
@@ -69,17 +74,21 @@ setup config storage = do
         (Text.unpack $ config >>. (Proxy :: Proxy '["oauth2","secret"]))
         (show $ config >>. (Proxy :: Proxy '["host"]))
   return . (,) sessionState
-    $ dirOr "./upload/"
-    $ dirOr "./download/"
-    $ dirOr "../client/static/"
+    $ dirOr "./runtime-data/upload/"
+    $ dirOr "./runtime-data/download/"
+    $ dirOr "./client/static/"
     $ withSession . S.requireSession vaultKey oauth
-    $ Static.staticApp $ (serveDir
-      "../client/dist/build/tribble-client/tribble-client.jsexe/")
-      {
-        Wai.ssIndices = [Wai.unsafeToPiece "index.html"]
-      }
+    $ Static.staticApp $ (serveDir "./client/js/")
+        { Wai.ssIndices = [Wai.unsafeToPiece "index.html"]
+        }
  where
   serveDir = Static.defaultWebAppSettings 
   fallback s a = s { Static.ss404Handler = Just a }
   dirOr dir or = Static.staticApp (serveDir dir `fallback` or)
+
+initState = do
+  g <- DB.initialiseGlobal
+  s <- MVar.newMVar Map.empty
+  n <- TChan.newBroadcastTChanIO
+  return $ State g s n
 

@@ -1,0 +1,10 @@
+**/.git/**/*
+**/.git
+**/.stack-work/**/*
+**/.stack-work
+client/js/**/*
+client/js
+client/static/**/*
+client/static
+runtime-data/**/*
+runtime-data

@@ -1,49 +1,96 @@
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE DeriveGeneric #-}
 module Common where
 
-import qualified DB
 import           Imports
+import           Types
 
-import qualified Web.Channel.Server             as S
-import qualified Web.Channel.Server.Session     as S
-
+import qualified Control.Concurrent.STM.TChan   as TChan
+import qualified Control.Concurrent.STM.TVar    as TVar
 import qualified Control.Concurrent.MVar        as MVar
-import qualified Control.Concurrent.Notify      as Notify
+import           Control.Lens           (makePrisms)
 import qualified Data.ByteString         as B
 import qualified Data.ByteString.Builder as B
 import qualified Data.ByteString.Lazy    as LB
-import qualified Data.Map                       as Map
+import qualified Data.ID                 as ID
+import qualified Data.Map                as Map
+import qualified Data.Set                as Set
 import qualified Data.TCache             as T
 import qualified Data.TCache.Defs        as T
 import qualified Data.Text               as Text
 import qualified Data.Text.Encoding      as Text
-import qualified Web.OAuth2.Google              as OAuth
+
+-- Users and accounts
+
+data Privilege
+  = GlobalAdministrator
+  | Administrator (ID.ID Account)
+  | Editor (ID.ID Account)
+  deriving (Generic, Typeable, Show)
+
+data Role
+  = Role (ID.ID User) Privilege
+  deriving (Generic, Typeable, Show)
+
+-- Internal state
+
+type Store
+  = T.Persist
+
+type Stores
+  = Map.Map (ID.ID Account) Store
 
 data State
   = State
-    { stores   :: MVar.MVar DB.Stores
-    , accounts :: MVar.MVar DB.Accounts
-    , changed  :: Notify.Notify
+    { globalStore   :: Store
+    , openStores    :: MVar.MVar Stores
+    , notifications :: TChan.TChan (Set.Set Topic)
     }
 
-initState = do
-  s <- MVar.newMVar Map.empty
-  a <- MVar.newMVar Map.empty
-  n <- Notify.new
-  return $ State s a n
+data Topic
+  = CurrentAccount
+  | SpecificQuestion (ID.ID (Decorated Question))
+  | QuestionsOverview
+  | SpecificTest     (ID.ID (Decorated Test    ))
+  | TestsOverview
+  deriving (Eq, Ord, Show)
+makePrisms ''Topic
 
-instance MonadIO DB.DB where
-  liftIO = T.stm . T.safeIOToSTM
+notify :: Set.Set Topic -> State -> STM ()
+notify topics state = TChan.writeTChan (notifications state) topics
 
-dbRun :: State -> Bool -> DB.DB a -> S.M a
-dbRun state notify d = do
-  user <- S.getUser
-  account <- liftIO $ MVar.modifyMVar (accounts state)
-    (return . DB.userAccount (OAuth.id user, OAuth.name user))
-  store <- liftIO $ MVar.modifyMVar (stores state) (DB.accountStore account)
-  result <- DB.run store d
-  when notify . liftIO $ Notify.notify $ changed state
-  return result
+wait :: TChan.TChan (Set.Set Topic) -> STM (Set.Set Topic)
+wait = TChan.readTChan
+
+waitFor :: Topic -> TChan.TChan (Set.Set Topic) -> IO ()
+waitFor topic c = waitFurther where
+  waitFurther = do
+    t <- atomically $ TChan.readTChan c
+    if topic `Set.member` t
+      then return ()
+      else waitFurther
+
+data LocalState
+  = LocalState
+    { localUser      :: MVar.MVar (Maybe (ID.WithID User))
+    , localInterests :: TVar.TVar (Set.Set Topic)
+    , localAccount   :: MVar.MVar (Maybe (ID.WithID Account))
+    }
+
+newLocalState :: State -> IO LocalState
+newLocalState state = LocalState
+  <$> MVar.newMVar Nothing
+  <*> TVar.newTVarIO Set.empty
+  <*> MVar.newMVar Nothing
+
+-- Exceptions
+
+data E
+  = NoAccount
+  deriving (Show)
+
+-- Miscellaneous
 
 utf8ByteString :: String -> LB.ByteString
 utf8ByteString = B.toLazyByteString . Text.encodeUtf8Builder . Text.pack

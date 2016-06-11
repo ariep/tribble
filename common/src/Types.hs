@@ -11,6 +11,9 @@ module Types
   , generateTitle
   , Test(..), name, elements
   , emptyTest
+  , User(..), userName, extID, UserExtID(GoogleID), UserName
+  , Account(..)
+  , Authored(..), author, authored, Author
   , ExportMode(..), Format(..)
   , QuestionFilter(..), labelFilter, searchText
   , emptyFilter
@@ -28,20 +31,19 @@ import qualified Data.ID as ID
 import           Types.Dated
 import           Types.Labelled
 
-import           Control.Lens (makeLenses, makePrisms, Lens', Iso', iso)
+import           Control.Lens  (makeLenses, makePrisms, Lens', Iso', iso)
 import qualified Data.SafeCopy  as SC
 import qualified Data.Set       as Set
-import           Data.Text      (Text)
+import           Data.Text     (Text)
 import qualified Data.Text      as Text
-import           Data.Typeable          (Typeable)
-import           GHC.Generics           (Generic)
+import           Data.Typeable (Typeable)
+import           GHC.Generics  (Generic)
 import qualified Text.Pandoc    as Pandoc
 
 
 data Question
   = Question
-    {
-      _question      :: RichText
+    { _question      :: RichText
     , _answer        :: Answer
     , _title         :: Title
     }
@@ -50,8 +52,7 @@ data Question
 data Answer
   = Open RichText
   | MultipleChoice
-    {
-      _choices :: [Choice]
+    { _choices :: [Choice]
     , _order   :: AnswerOrder
     }
   deriving (Generic, Typeable, Show)
@@ -64,8 +65,7 @@ type AnswerOrder
 
 data Title
   = Title
-    {
-      _titleText :: Text
+    { _titleText :: Text
     , _generated :: Bool
     }
     deriving (Generic, Typeable, Show)
@@ -77,8 +77,7 @@ generateTitle = flip Title True . Text.take maxTitleLength . renderPlain
 
 data Test
   = Test
-    {
-      _name     :: Text
+    { _name     :: Text
     , _elements :: [TestElement]
     }
   deriving (Generic, Typeable, Show)
@@ -89,7 +88,38 @@ data TestElement
   deriving (Generic, Typeable, Show)
 
 type Decorated x
-  = Labelled (Dated x)
+  = Authored (Labelled (Dated x))
+
+-- Users and accounts
+
+data User
+  = User
+    { _extID      :: UserExtID
+    , _userName   :: UserName
+    }
+  deriving (Generic, Typeable, Show)
+
+data UserExtID
+  = GoogleID Text
+  deriving (Generic, Typeable, Show, Eq, Ord)
+
+type UserName
+  = Text
+
+data Account
+  = Account Text
+  deriving (Generic, Typeable, Show)
+
+data Authored x
+  = Authored
+    {
+      _author   :: Author
+    , _authored :: x
+    }
+  deriving (Generic, Typeable, Show)
+
+type Author
+  = ID.ID User
 
 -- Exporting tests
 
@@ -159,7 +189,7 @@ rtToHtml (Pandoc p) = Pandoc.writeHtmlString
 htmlToRt :: Html -> RichText
 htmlToRt = either (plainRich . Text.pack . show) r .
   Pandoc.readHtml Pandoc.def
-    -- Gives a runtime error in the browser!
+    -- The below alternative gives a runtime error in the browser!
     -- (Pandoc.def
     --   { Pandoc.readerSmart = True
     --   }
@@ -176,9 +206,11 @@ makeLenses ''Title
 makeLenses ''Test
 makePrisms ''TestElement
 makeLenses ''QuestionFilter
+makeLenses ''User
+makeLenses ''Authored
 
 undecorated :: Lens' (Decorated x) x
-undecorated = labelled . dated
+undecorated = authored . labelled . dated
 
 -- Serialisation
 
@@ -193,8 +225,11 @@ SC.deriveSafeCopy 0 'SC.base ''Pandoc.ListNumberDelim
 SC.deriveSafeCopy 0 'SC.base ''Pandoc.ListNumberStyle
 SC.deriveSafeCopy 0 'SC.base ''Pandoc.Block
 SC.deriveSafeCopy 0 'SC.base ''RichText
+SC.deriveSafeCopy 0 'SC.base ''UserExtID
+SC.deriveSafeCopy 0 'SC.base ''User
+SC.deriveSafeCopy 0 'SC.base ''Account
 SC.deriveSafeCopy 0 'SC.base ''Title
-SC.deriveSafeCopy 1 'SC.extension ''Question
+SC.deriveSafeCopy 0 'SC.base ''Question
 SC.deriveSafeCopy 0 'SC.base ''Answer
 SC.deriveSafeCopy 0 'SC.base ''Test
 SC.deriveSafeCopy 0 'SC.base ''TestElement
@@ -203,22 +238,23 @@ SC.deriveSafeCopy 0 'SC.base ''Format
 SC.deriveSafeCopy 0 'SC.base ''QuestionFilter
 SC.deriveSafeCopy 0 'SC.base ''Dated
 SC.deriveSafeCopy 0 'SC.base ''Labelled
+SC.deriveSafeCopy 0 'SC.base ''Authored
 SC.deriveSafeCopy 0 'SC.base ''Dates
 SC.deriveSafeCopy 0 'SC.base ''ID.ID
 SC.deriveSafeCopy 0 'SC.base ''ID.WithID
 
-data Question_v0
-  = Question_v0
-    {
-      _question_v0      :: RichText
-    , _answer_v0        :: Answer
-    }
-  deriving (Generic, Typeable, Show)
-SC.deriveSafeCopy 0 'SC.base ''Question_v0
-instance SC.Migrate Question where
-  type MigrateFrom Question = Question_v0
-  migrate (Question_v0 { .. }) = Question
-    { _question = _question_v0
-    , _answer   = _answer_v0
-    , _title    = generateTitle _question_v0
-    }
+-- data Question_v0
+--   = Question_v0
+--     {
+--       _question_v0      :: RichText
+--     , _answer_v0        :: Answer
+--     }
+--   deriving (Generic, Typeable, Show)
+-- SC.deriveSafeCopy 0 'SC.base ''Question_v0
+-- instance SC.Migrate Question where
+--   type MigrateFrom Question = Question_v0
+--   migrate (Question_v0 { .. }) = Question
+--     { _question = _question_v0
+--     , _answer   = _answer_v0
+--     , _title    = generateTitle _question_v0
+--     }

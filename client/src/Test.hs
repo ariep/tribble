@@ -1,46 +1,42 @@
 module Test where
 
 import Common
-import Components
-import Question (editQuestion, questionForm)
+import qualified Components
+import Question  (questionForm)
+import Questions (editQuestion, newQuestion, addQuestion)
+import Tests     (changeTest)
 import Types
 
-import qualified Web.Channel as Ch
-import Web.Channel.Client (sendMany, sendManyReceipt, get, getDyn, sendFileReceipt)
-import Web.Widgets
-import Web.Widgets.DragAndDrop
-import Web.Widgets.Edit
+import qualified Web.Channel        as Ch
+import qualified Web.Channel.Client as Ch
+import qualified Web.Channel.Client.Cache.ReadWrite as Cache
+import           Web.Widgets
+import           Web.Widgets.DragAndDrop
+import qualified Web.Widgets.Modal as Modal
 
-import           Control.Concurrent.MVar (newMVar, readMVar, modifyMVar_)
 import           Control.Lens            (view, over, mapped)
-import           Control.Monad           ((<=<))
+import           Control.Monad           (join, (<=<))
 import           Control.Monad.IO.Class  (MonadIO, liftIO)
 import           Data.Foldable           (for_)
 import qualified Data.ID                  as ID
 import           Data.List               (find, transpose)
 import qualified Data.Map                 as Map
-import qualified Data.Set                 as Set
 import qualified Data.Text                as Text
 import           GHCJS.DOM               (currentWindow)
-import           GHCJS.DOM.DataTransfer  (setData, getData)
-import           GHCJS.DOM.Element       (mouseUp, mouseDown, setAttribute)
 import           GHCJS.DOM.EventM        (on, event, preventDefault, target)
-import           GHCJS.DOM.MouseEvent    (getDataTransfer)
-import           GHCJS.DOM.Node          (Node, contains, getNodeName, getNodeType, getNodeValue)
-import           GHCJS.DOM.NodeList      (item)
 import           GHCJS.DOM.Storage       (getItem, setItem)
 import           GHCJS.DOM.Window        (getLocalStorage)
 import           Reflex.Dom
+import           Reflex.Dom.Contrib.Widgets.ButtonGroup
 import           Reflex.Dom.Contrib.Widgets.Common
 
--- schedulePostBuild: useful for focus on multiple choice options?
-
-displayTest :: (MonadWidget t m, MonadIO (PushM t)) =>
-  CurrentQuestions t -> C t m (CurrentTest t)
-displayTest qs = divClass "panel panel-default" $ do
-  currentTest <- divClass "panel-heading" $ tests
+displayTest :: forall t m. (MonadWidget t m, MonadIO (PushM t)) =>
+  CurrentUser t -> Tests t -> QuestionCache t m ->
+  C t m (CurrentTest t)
+displayTest user tests questionCache = divClass "panel panel-default" $ do
+  currentTest <- divClass "panel-heading" $ testHeader user tests
   forDynM_ currentTest . maybe blank $ \ t -> do
-    divClass "panel-body" $ do
+    divClass "panel-body" . el "ol" $ do
       dnd <- dragAndDrop
       let test = view (ID.object . undecorated) t
       let tElements = map (displayElement currentTest dnd) .
@@ -50,45 +46,49 @@ displayTest qs = divClass "panel panel-default" $ do
             [0 .. length tElements]
       dndE <- fmap leftmost . sequence . concat . transpose $
         [dropzones, map (>> return never) tElements]
-      changedTest <- sendMany (Ch.update crudTests) $ fmapMaybe id $
-        attachDynWith moveQuestion currentTest dndE
+      changedTest <- Ch.sendMany (Ch.updateID Components.crudTests) $
+        fmapMaybe id $ attachDynWith moveQuestion currentTest dndE
       blank
-    divClass "panel-footer" $ exportButton t >> blank
+    divClass "panel-footer" $ leftRightAlign
+      (newQuestion user >>= addQuestion currentTest)
+      (exportButton t)
+    blank
   return currentTest
  where
   displayElement currentTest dnd (i, te) = mdo
-    (e, d) <- elDynAttr' "div" attrs $ toggleModes
-      (viewMode te >> return (domEvent Click e))
-      (editMode e i te)
+    (e, d) <- elDynAttr' "li" attrs $ toggleModes
+      (viewMode i te >> return (domEvent Click e))
+      (editMode i te)
     attrs <- flip mapDyn d $ Map.singleton "class" . \case
-      True  -> "question viewMode"
-      False -> "question editMode"
+      Left ()  -> "question viewMode"
+      Right () -> "question editMode"
     return ()
    where
-    viewMode (TestText rt)    = html $ rtToHtml rt
-    viewMode (TestQuestion i) = mapDyn (find ((==) i . ID.__ID)) qs
-      >>= \ qD -> forDynM_ qD $ maybe (text "Question not found") $
-        displayQuestion . view (ID.object . undecorated)
-    editMode e i (TestText rt)      = html (rtToHtml rt) >> return never
-    editMode e i (TestQuestion qId) = mapDyn (find ((==) qId . ID.__ID)) qs
-      >>= \ qD -> forDynEvent qD $ maybe (text "Question not found" >> return never) $ \ q -> do
-        dragHandle dnd i
-        newQ <- editLens (ID.object . undecorated) questionForm q
+    viewMode i (TestText rt)      = html $ rtToHtml rt
+    viewMode i (TestQuestion qId) = lookupQuestion qId
+      >>= \ qD -> forDynM_ qD $ maybe (text "Loading...") $ \ q ->
+        dragzone dnd i $ Entire $ \ makeDrag -> makeDrag $
+          displayQuestion . view (ID.object . undecorated) $ q
+    editMode i (TestText rt)      = html (rtToHtml rt) >> return never
+    editMode i (TestQuestion qId) = lookupQuestion qId >>= \ qD ->
+      forDynEvent qD $ maybe (text "Loading..." >> return never) $ \ q -> do
+        newQ <- editLens ID.object questionForm q
         cancelE <- buttonClass "btn btn-default" "Annuleer"
-        savedE <- buttonClass "btn btn-success" "Sla op"
-          >>= sendMany (Ch.update crudQuestions) . tagDyn newQ
         do
-          removeE <- buttonClass "btn btn-default" "Haal weg uit toets"
+          removeE <- buttonClass "btn btn-warning" "Haal weg uit toets"
           changedTest <- mapDyn (removeQuestion i) currentTest
-          sendMany (Ch.update crudTests) $
+          Ch.sendMany (Ch.updateID Components.crudTests) $
             fmapMaybe id $ tagDyn changedTest removeE
+        savedE <- buttonClass "btn btn-success" "Sla op"
+          >>= Ch.sendMany (Ch.updateID Components.crudQuestions) . tagDyn newQ
         return $ leftmost [cancelE, savedE]
   displayQuestion q = do
     divClass "questionText" $ html . rtToHtml $ view question q
     divClass "questionAnswer" $ case view answer q of
       Open a                -> blank
-      a@(MultipleChoice {}) -> for_ (view choices a `orderBy` view order a) $
-        \ (_correct, rt) -> divClass "choice" $ html . rtToHtml $ rt
+      a@(MultipleChoice {}) -> elClass "ol" "multiple-choice" $
+        for_ (view choices a `orderBy` view order a) $
+          \ (_correct, rt) -> el "li" $ html . rtToHtml $ rt
   removeQuestion :: Int
     -> Maybe (ID.WithID (Decorated Test))
     -> Maybe (ID.WithID (Decorated Test))
@@ -99,40 +99,45 @@ displayTest qs = divClass "panel panel-default" $ do
   moveQuestion t (i, j) = over (mapped . ID.object . undecorated . elements)
     (moveListElement i j) t
   exportButton t = do
-    exportWindow <- buttonClass "btn btn-info" "Exporteer"
-    modal exportWindow $ \ () -> do
-      el "h3" $ text "Exporteer toets"
-      mode <- selectFromInitial OnlyQuestions
-        (constDyn [OnlyQuestions, WithAnswers])
-        (dynText <=< mapDyn showMode)
-      format <- divClass "formpart" $ text "Formaat:" >> selectFromInitial PDF
-        (constDyn [PDF, Word, LaTeX, Show])
-        (dynText <=< mapDyn show)
-      request <- return (constDyn $ (,,) $ view ID._ID t)
-        >>= combineDyn (flip ($)) mode
-        >>= combineDyn (flip ($)) format
-      cancel <- buttonClass "btn" "Annuleer"
-      export <- tagDyn request <$> buttonClass "btn" "Exporteer"
-      result <- sendManyReceipt exportTest export
-      let url = push (return . either (const Nothing) Just) result
-      el "div" $ dynText =<< holdDyn ""
-        (push (return . either (Just . Text.unpack) (const Nothing)) result)
-      let opened = openExternal url
-      return (opened, cancel)
+    exportWindow <- buttonClass "btn btn-primary" "Exporteer"
+    exportE <- Modal.dialogue exportWindow
+      "Annuleer" "Exporteer" "btn-primary"
+      (el "h3" $ text "Exporteer toets") $ \ () -> divClass "form" $ do
+        mode <- divClass "form-group" $ mapDyn (maybe OnlyQuestions id) =<<
+          value <$> bootstrapButtonGroup
+            (constDyn $ map (\ a -> (a, showMode a))
+              [OnlyQuestions, WithAnswers]) def
+        format <- divClass "form-group" $ do
+          el "label" $ text "Formaat:"
+          mapDyn (maybe PDF id) =<< value <$>
+            bootstrapButtonGroup (constDyn $ map (\ a -> (a, show a))
+              [PDF, Word, LaTeX, Show]) def
+        request <- return (constDyn $ (,,) $ view ID._ID t)
+          >>= combineDyn (flip ($)) mode
+          >>= combineDyn (flip ($)) format
+        mapDyn Right request
+    result <- Ch.sendManyReceipt Components.exportTest exportE
+    let url = push (return . either (const Nothing) Just) result
+    let exportError = push (return . either Just (const Nothing)) result
+    consumeEvent $ openExternal url
+    Modal.info exportError "Ga door" (el "h3" $ text "Fout bij exporteren")
+      (text . Text.unpack)
+    return ()
+  lookupQuestion :: ID.ID (Decorated Question)
+    -> Make t m (Maybe (ID.WithID (Decorated Question)))
+  lookupQuestion i = do
+    Cache.interestedNow (Ch.interestID Components.crudQuestions) i
+    Cache.current questionCache ID.__ID i
 
-tests :: (MonadWidget t m, MonadIO (PushM t))
-  => C t m (CurrentTest t)
-tests = divClass "row" $ mdo
-  divClass "col-md-6" $ showCurrent currentTest
-  testE <- divClass "col-md-6 text-right" $ do
-    newTestE <- newTest
-    pickTestE <- pickTest
-    return $ leftmost [newTestE, pickTestE]
+testHeader :: (MonadWidget t m, MonadIO (PushM t))
+  => CurrentUser t -> Tests t -> C t m (CurrentTest t)
+testHeader user tests = divClass "testHeader" $ mdo
+  showCurrent currentTest
+  testE <- changeTest user tests
   storageTest <- getStorageTest
   currentTestID <- holdDyn storageTest $ Just . ID.__ID <$> testE
   forDynM_ currentTestID $ maybe (return ()) setStorageTest
-  currentTest <- combineDyn lookupTest currentTestID
-    =<< getDyn (Ch.list crudTests) []
+  currentTest <- combineDyn lookupTest currentTestID tests
   return currentTest
  where
   lookupTest :: Maybe (ID.ID (Decorated Test))
@@ -146,49 +151,6 @@ showCurrent :: (MonadWidget t m)
 showCurrent currentTest = forDynM_ currentTest $ maybe blank $ \ t ->
   el "h3" . text . Text.unpack $ view (ID.object . undecorated . name) t
 
-newTest :: (MonadWidget t m, MonadIO (PushM t))
-  => C t m (Event t (ID.WithID (Decorated Test)))
-newTest = do
-  newTestButton <- buttonClass "btn btn-info" "Maak een nieuwe toets"
-  newTestE <- dialogue newTestButton "Annuleer" "Sla op"
-    (el "h3" $ text "Nieuwe toets")
-    (\ () -> mapDyn Right =<< testForm emptyTest)
-  let decE = flip push newTestE $ \ q -> do
-        dq <- date q
-        return . Just $ Labelled Set.empty dq
-  decD <- holdDyn undefined decE
-  newTestID <- sendManyReceipt (Ch.create crudTests) decE
-  return $ attachDynWith (flip ID.WithID) decD newTestID
-
-testForm :: (MonadWidget t m, MonadIO (PushM t))
-  => Edit t m Test
-testForm _t = el "label" $ do
-  text "Naam:"
-  name_ <- mapDyn Text.pack =<< value <$> textInput def
-  return (constDyn Test)
-    >>= combineDyn (flip ($)) name_
-    >>= combineDyn (flip ($)) (constDyn [])
-
-pickTest :: forall t m. (MonadWidget t m, MonadIO (PushM t))
-  => C t m (Event t (ID.WithID (Decorated Test)))
-pickTest = do
-  changeTestButton <- buttonClass "btn btn-info" "Kies een andere toets"
-  tests <- getDyn (Ch.list crudTests) []
-  modal changeTestButton $ \ () -> do
-    el "h3" $ text "Kies een andere toets"
-    pick <- fmap switchPromptlyDyn . mapDyn leftmost =<<
-      simpleList tests testChoice
-    cancel <- buttonClass "btn" "Annuleer"
-    return (pick, cancel)
- where
-  testChoice :: Dynamic t (ID.WithID (Decorated Test))
-    -> C t m (Event t (ID.WithID (Decorated Test)))
-  testChoice dTest = do
-    (e, _) <- elAttr' "div" (Map.fromList [("class", "pick")]) $
-      dynText =<< mapDyn
-        (Text.unpack . view (ID.object . undecorated . name))
-        dTest
-    return $ tagDyn dTest $ domEvent Click e
 
 type CurrentQuestions t
   = Dynamic t [ID.WithID (Decorated Question)]

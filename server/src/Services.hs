@@ -1,5 +1,6 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE Rank2Types #-}
 module Services where
 
 import           Common
@@ -13,10 +14,15 @@ import qualified Web.Channel                    as Ch
 import qualified Web.Channel.Server             as S
 import qualified Web.Channel.Server.Session     as S
 
-import qualified Control.Concurrent.Notify      as Notify
+import Control.Concurrent (threadDelay)
+import qualified Data.TCache             as T
+
+import qualified Control.Concurrent.STM.TChan   as TChan
+import qualified Control.Concurrent.STM.TVar    as TVar
 import qualified Control.Coroutine.Monadic      as Co
 import           Control.Monad           (filterM)
 import qualified Data.ByteString.Lazy           as BSL
+import           Data.Maybe              (mapMaybe)
 import qualified Data.Search.Results            as Results
 import qualified Data.Set                       as Set
 import qualified Data.TCache.ID                 as ID
@@ -29,26 +35,35 @@ import qualified Web.OAuth2.Google              as OAuth
 
 import qualified Data.Text as Text
 
-channels :: State -> IO [S.ServedChannel]
+channels :: State -> IO [S.ServedChannel LocalState E]
 channels state = do
-  n₁ <- Notify.subscribe $ changed state
-  n₂ <- Notify.subscribe $ changed state
-  return $ 
-    crud state n₁ crudTests (Proxy :: Proxy (Decorated Test)) ++
-    crud state n₂ crudQuestions (Proxy :: Proxy (Decorated Question)) ++
-    [ S.ServeChannel showUser $
-        Co.pre S.getUser $ \ user ->
-        Co.put (OAuth.name user) Co.>>
+  testChannels <- crud state _SpecificTest TestsOverview crudTests
+    (Proxy :: Proxy (Decorated Test))
+  questionChannels <- crud state _SpecificQuestion QuestionsOverview crudQuestions
+    (Proxy :: Proxy (Decorated Question))
+  ln <- atomically $ TChan.dupTChan (notifications state)
+  return $ testChannels ++ questionChannels ++
+    [ S.ServeChannel currentUser $
+        Co.pre (DB.getCurrentUser state) $ \ user ->
+        Co.put user Co.>>
+        Co.close
+    , S.ServeChannel currentAccount $ Co.repeat $
+        Co.pre DB.getCurrentAccount $ \ acc ->
+        Co.put acc Co.>>
+        Co.pre_ (liftIO $ waitFor CurrentAccount ln)
+        Co.close
+    , S.ServeChannel allTests $ Co.repeat $
+        Co.pre  (DB.runNotify state [] DB.getAll) $ \ xs ->
+        Co.put xs Co.>>
+        Co.pre_ (liftIO $ waitFor TestsOverview ln)
         Co.close
     , S.ServeChannel uploadImage $ Co.repeat $
         Co.get Co.>>= \ (Ch.File b) ->
-        Co.pre (liftIO $ saveFileRandomName "/images/" b) $ \ fn ->
+        Co.pre (liftIO $ saveFileRandomName "images/" b) $ \ fn ->
         Co.put fn Co.>>
         Co.close
-    , S.ServeChannel exportTest $ Co.repeat $
-        Co.get Co.>>= \ (testID, mode, format) ->
-        Co.pre (dbRun state False $ Export.export mode format testID) $ \ r ->
-        Co.put (remoteUrl <$> r) Co.>> Co.close
+    , queryService state exportTest $ \ (testID, mode, format) ->
+        fmap remoteUrl <$> Export.export mode format testID
     , queryService state filterQuestions searchQuestions
     , queryService state questionLabels searchQuestionLabel
     ]
@@ -57,10 +72,10 @@ queryService :: (SafeCopy a, SafeCopy b) =>
   State ->
   Ch.Channel (Co.Repeat (a Co.:?: b Co.:!: Co.Eps)) ->
   (a -> DB.DB b) ->
-  S.ServedChannel
+  S.ServedChannel LocalState E
 queryService state c q = S.ServeChannel c $ Co.repeat $
   Co.get Co.>>= \ a ->
-  Co.pre (dbRun state False $ q a) $ \ b ->
+  Co.pre (DB.runNotify state [] $ q a) $ \ b ->
   Co.put b Co.>> Co.close
 
 -- pureService :: (SafeCopy a, SafeCopy b) =>
@@ -72,35 +87,61 @@ queryService state c q = S.ServeChannel c $ Co.repeat $
 --   Co.put (f a) Co.>> Co.close
 
 crud :: forall a b. (SafeCopy b, Typeable b, a ~ Decorated b)
-  => State -> Notify.Listen -> Ch.Token (Ch.CRUD a) -> Proxy a ->
-  [S.ServedChannel]
-crud state notify t _ =
-  [ S.ServeChannel (Ch.list t :: Ch.Channel (Ch.List a)) $ Co.repeat $
-      Co.pre  (dbRun state False DB.getAll :: S.M [ID.WithID a]) $ \ ls ->
-      Co.put ls Co.>>
-      Co.pre_ (liftIO $ Notify.wait notify)
-      Co.close
-  , S.ServeChannel (Ch.delete t :: Ch.Channel (Ch.Delete a)) $ Co.repeat $
-      Co.get Co.>>= \ i ->
-      Co.pre_ (dbRun state True $ ID.delete =<< ID.refM i)
-      Co.close
-  , S.ServeChannel (Ch.create t :: Ch.Channel (Ch.Create a)) $ Co.repeat $
-      Co.get Co.>>= \ (x :: a) ->
-      Co.pre (dbRun state True $ ID.addNew x) $ \ i ->
-      Co.put i Co.>>
-      Co.close
-  , S.ServeChannel (Ch.update t) $ Co.repeat $
-      Co.get Co.>>= \ (x :: ID.WithID a) ->
-      Co.pre_ (dbRun state True $ ID.write x >> return ())
-      Co.close
-  , S.ServeChannel (Ch.markDeleted t) $ Co.repeat $
-      Co.get Co.>>= \ i ->
-      Co.pre_ (dbRun state True $ do
-        d <- liftIO getCurrentTime
-        overM (ID._IDLens . labelled) (deleteDated d) i
-        return ())
-      Co.close
-  ]
+  => State -> (Prism' Topic (ID.ID a)) -> Topic -> Ch.Token (Ch.CRUD a) -> Proxy a ->
+  IO [S.ServedChannel LocalState E]
+crud state specific overview t _ = do
+  localNotifications <- atomically $ TChan.dupTChan (notifications state)
+  return
+    [ S.ServeChannel (Ch.deleteID t) $ Co.repeat $
+        Co.get Co.>>= \ i ->
+        Co.pre_ (DB.runNotify state [overview] $ ID.delete =<< ID.refM i)
+        Co.close
+    , S.ServeChannel (Ch.createID t) $ Co.repeat $
+        Co.get Co.>>= \ (x :: a) ->
+        Co.pre (DB.runNotify state [overview] $ ID.addNew x) $ \ i ->
+        Co.put i Co.>>
+        Co.close
+    , queryService state (Ch.lookupID t) ID.lookupMaybe
+    , S.ServeChannel (Ch.updateID t) $ Co.repeat $
+        Co.get Co.>>= \ (x :: ID.WithID a) ->
+        Co.pre_ (DB.runNotify state [overview, review specific $ ID.__ID x] . void $ ID.write x)
+        Co.close
+    , S.ServeChannel (Ch.markDeletedID t) $ Co.repeat $
+        Co.get Co.>>= \ i ->
+        Co.pre_ (DB.runNotify state [overview, review specific i] $ do
+          d <- liftIO getCurrentTime
+          overM (ID._IDLens . authored . labelled) (deleteDated d) i
+          return ())
+        Co.close
+    , S.ServeChannel (Ch.interestID t) $ Co.repeat $
+        Co.get Co.>>= \ (i, interested) -> let t' = review specific i in
+        Co.pre S.getLocalState $ \ ls ->
+        Co.pre_ (liftIO $ atomically $ do
+          oldInterests <- TVar.readTVar (localInterests ls)
+          TVar.writeTVar (localInterests ls) $ if interested
+            then Set.insert t' oldInterests
+            else Set.delete t' oldInterests
+          when (interested && not (Set.member t' oldInterests)) $
+            notify (Set.singleton t') state)
+        Co.close
+    , S.ServeChannel (Ch.changeID t) $ Co.repeat $
+        Co.pre S.getLocalState $ \ ls ->
+        Co.pre (liftIO $ waitForSet ls localNotifications specific) $ \ i ->
+        Co.pre (DB.runNotify state [] $ mapM ID.lookup i) $ \ w ->
+        Co.put w Co.>> Co.close
+    ]
+
+waitForSet :: (Ord a) =>
+  LocalState -> TChan.TChan (Set.Set Topic) -> Prism' Topic a -> IO [a]
+waitForSet ls ln prism = waitFurther where
+  waitFurther = look >>= \case
+    [] -> waitFurther
+    xs -> return xs
+  look = atomically $ do
+    t <- wait ln
+    i <- TVar.readTVar $ localInterests ls
+    return $ mapMaybe (preview prism) $
+      Set.toList (t `Set.intersection` i)
 
 saveFileRandomName :: FilePath -> BSL.ByteString -> IO FilePath
 saveFileRandomName dir b = do
@@ -111,7 +152,7 @@ saveFileRandomName dir b = do
   randomName = take 16 . randomRs ('a', 'z') <$> newStdGen
   newName = do
     f <- (dir ++) <$> randomName
-    let localFile = "./upload" ++ f
+    let localFile = "./runtime-data/upload/" ++ f
     Dir.doesFileExist localFile >>= \case
       True  -> newName
       False -> return (f, localFile)
@@ -130,12 +171,13 @@ searchQuestions qFilter = case view searchText qFilter of
     IndexText.lookup DB.questionIndex t
  where
   undeleted, rightLabels, relevant :: ID.WithID (Decorated Question) -> Bool
-  undeleted = not . isDeleted . view (ID.object . labelled)
+  undeleted = not . isDeleted . view (ID.object . authored . labelled)
   rightLabels = (view labelFilter qFilter `Set.isSubsetOf`) .
-    view (ID.object . labels)
+    view (ID.object . authored . labels)
   relevant w = undeleted w && rightLabels w
 
 searchQuestionLabel :: Maybe Text -> DB.DB [Label]
 searchQuestionLabel Nothing  = map fst <$> IndexMap.listAll DB.questionLabelIndex
 searchQuestionLabel (Just t) = map (\ (_, _, l) -> l) . Results.take 10 <$>
   IndexText.lookup DB.questionLabelTextIndex t
+
