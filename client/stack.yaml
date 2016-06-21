@@ -13,7 +13,7 @@ packages:
 - ../common
 - location:
     git: https://github.com/ariep/plug.git
-    commit: 314a25829b689762622c3e7b4fa34e11432a10e1
+    commit: 36dfedc09347e8526a7edf6479d26cbbfbb4362b
 # - location: /home/arie/dev/web/plug
   subdirs:
     - plug-common

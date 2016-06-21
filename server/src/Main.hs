@@ -16,11 +16,12 @@ import qualified Services
 import qualified Web.Channel.Server             as S
 import qualified Web.Channel.Server.Session     as S
 
+import           Control.Concurrent      (forkIO)
 import qualified Control.Concurrent.MVar        as MVar
 import qualified Control.Concurrent.STM.TChan   as TChan
 import qualified Control.Concurrent.STM.TVar    as TVar
 import           Control.Exception       (bracket)
-import           Control.Monad           (join, when)
+import           Control.Monad           (join, when, forever)
 import qualified Data.Acid.Local                as Acid
 import qualified Data.ByteString                as BS
 import qualified Data.Map                       as Map
@@ -44,7 +45,11 @@ main :: IO ()
 main = do
   config <- readConfig
   let host = config >>. (Proxy :: Proxy '["host"])
-      port = maybe 80 (read . drop 1 . uriPort) $ uriAuthority host
+      port = maybe defaultPort (readPort . drop 1 . uriPort) $
+        uriAuthority host
+      readPort p = if null p then defaultPort else read p
+      defaultPort = 80
+      bindPort = maybe port id $ config >>. (Proxy :: Proxy '["bind_port"])
   state <- initState
   withStorage $ \ storage -> do
     (sessionState, static) <- setup config storage
@@ -52,7 +57,7 @@ main = do
       (S.Config sessionState host $ newLocalState state)
       <$> Services.channels state
     Warp.runSettings
-      (Warp.setPort port Warp.defaultSettings)
+      (Warp.setPort bindPort Warp.defaultSettings)
       $ S.withWebSocketApp static app
 
 type SD
@@ -86,6 +91,7 @@ setup config storage = do
   fallback s a = s { Static.ss404Handler = Just a }
   dirOr dir or = Static.staticApp (serveDir dir `fallback` or)
 
+initState :: IO State
 initState = do
   g <- DB.initialiseGlobal
   s <- MVar.newMVar Map.empty

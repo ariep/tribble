@@ -10,6 +10,8 @@ module DB
   , accountStore
   , getCurrentUser
   , getCurrentAccount
+  , setCurrentAccount
+  , getAccounts
 
   , idIndex
   , questionIndex
@@ -77,16 +79,27 @@ lookupUser uid uName = do
   if Set.null uKeys
     then do
       let u = User uid uName
-      i <- ID.addNew u 
+      i <- ID.addNew u
+      autoAccounts <- Set.toList . maybe Set.empty getAutoAccounts <$>
+        (T.readDBRef =<< T.getDBRefM "")
+      for autoAccounts $ \ a ->
+        T.newDBRef $ Role i $ Editor a
       return $ ID.WithID i u
     else do
       let i = ID.fromKey $ Set.elemAt 0 uKeys
       ID.lookup i
 
-getCurrentAccount :: S.M LocalState E (Maybe (ID.WithID Account))
+getCurrentAccount :: S.M LocalState E (ID.WithID Account)
 getCurrentAccount = do
   mvar <- localAccount <$> S.getLocalState
   liftIO (MVar.readMVar mvar)
+
+setCurrentAccount :: ID.WithID Account -> S.M LocalState E ()
+setCurrentAccount acc = do
+  mvar <- localAccount <$> S.getLocalState
+  liftIO $ MVar.tryPutMVar mvar acc >>= \case
+    True  -> return ()
+    False -> MVar.modifyMVar_ mvar $ const $ return acc
 
 userExtIDIndex :: IndexMap.Field (ID.WithID User) UserExtID
 userExtIDIndex = IndexMap.field (view (ID.object . extID))
@@ -97,18 +110,19 @@ accountIndex = IndexText.field (\ (Account t) -> t)
 roleUserIndex :: IndexMap.Field Role (ID.ID User)
 roleUserIndex = IndexMap.field (\ (Role i _) -> i)
 
-lookupDefaultAccount :: ID.ID User -> T.DB (Maybe (ID.WithID Account))
-lookupDefaultAccount u = do
+getAccounts :: ID.ID User -> T.DB [ID.WithID Account]
+getAccounts u = do
   roles <- fmap (map (\ (Role _ p) -> p) . catMaybes) . T.readDBRefs
     =<< mapM T.getDBRefM . Set.toList
     =<< IndexMap.lookup roleUserIndex u
-  let accs = flip mapMaybe roles $ \case
-        GlobalAdministrator -> Nothing
-        Administrator a     -> Just a
-        Editor        a     -> Just a
-  case listToMaybe accs of
-    Nothing  -> return Nothing
-    Just aID -> Just <$> ID.lookup aID
+  if GlobalAdministrator `elem` roles
+    then ID.listWithID
+    else fmap catMaybes . for roles $ \case
+      GlobalAdministrator -> return Nothing
+      Administrator a     -> r a
+      Editor        a     -> r a
+ where
+  r a = Just <$> ID.lookup a
 
 
 -- Stores
@@ -146,7 +160,7 @@ initialiseAccount account = do
   fileStore :: ID.ID Account -> IO Store
   fileStore account = T.filePersist $
     "./runtime-data/data/" ++ accountPath account
-  
+
   accountPath :: ID.ID Account -> String
   accountPath (ID.ID t) = "account/" ++ Text.unpack t
 
@@ -215,20 +229,22 @@ runNotify :: State -> [Topic] -> DB a -> M a
 runNotify state topics d = do
   user <- getCurrentUser state
   aMVar <- localAccount <$> S.getLocalState
-  cAccount <- liftIO $ MVar.readMVar aMVar
-  account <- case cAccount of
-    Just a  -> return a
-    Nothing -> run (globalStore state)
-      (lookupDefaultAccount $ view ID._ID user) >>= \case
-        Just a  -> do
-          liftIO $ MVar.modifyMVar_ aMVar (const $ return $ Just a)
-          liftIO .atomically $ notify (Set.singleton CurrentAccount) state
-          return a
-        Nothing -> S.except NoAccount
+  account <- liftIO $ MVar.readMVar aMVar
+  -- account <- case cAccount of
+  --   Just a  -> return a
+  --   Nothing -> S.except NoAccount
+    -- Nothing -> run (globalStore state)
+    --   (lookupDefaultAccount $ view ID._ID user) >>= \case
+    --     Just a  -> do
+    --       liftIO $ MVar.modifyMVar_ aMVar (const $ return $ Just a)
+    --       liftIO .atomically $ notify (Set.singleton CurrentAccount) state
+    --       return a
+    --     Nothing -> S.except NoAccount
   store <- liftIO $ MVar.modifyMVar
     (openStores state)
     (accountStore $ view ID._ID account)
   result <- run store d
+  -- liftIO . putStrLn $ "notifying: " ++ show topics
   liftIO . atomically $ notify (Set.fromList topics) state
   return result
 
@@ -244,6 +260,8 @@ instance T.Indexable Account where
   key (Account t) = Text.unpack t
 instance T.Indexable Role where
   key (Role (ID.ID u) p) = Text.unpack u <> "-" <> show p
+instance T.Indexable AutoAccounts where
+  key = const ""
 
 SC.deriveSafeCopy 0 'SC.base ''TextIndex.Weight
 SC.deriveSafeCopy 0 'SC.base ''OrdPSQ.OrdPSQ
@@ -253,5 +271,6 @@ SC.deriveSafeCopy 0 'SC.base ''TST.TST
 
 SC.deriveSafeCopy 0 'SC.base ''Privilege
 SC.deriveSafeCopy 0 'SC.base ''Role
+SC.deriveSafeCopy 0 'SC.base ''AutoAccounts
 
 

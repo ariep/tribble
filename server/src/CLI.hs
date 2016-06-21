@@ -97,6 +97,12 @@ commands globalStore store = Node
             >> putStrLn "Role added."
           ) []
       ]
+  , Node (CP.command "add" "" . CP.io . CP.showUsage $ commands globalStore store)
+    [ Node (CP.command "autoaccount" "Mark an account as to be added to new users automatically." . CP.io
+       $ (DB.run globalStore . addAuto =<< (input :: IO (ID.ID Account)))
+         >> putStrLn "Account marked."
+       ) []
+    ]
   ]
 
 importOld :: Store -> IO ()
@@ -107,6 +113,12 @@ importOld store = do
  where
   addAuthor :: Author -> ID.WithID x -> ID.WithID (Authored x)
   addAuthor user = over ID.object $ Authored user
+
+addAuto :: ID.ID Account -> DB.DB ()
+addAuto i = do
+  d <- T.getDBRefM ""
+  s <- maybe Set.empty getAutoAccounts <$> T.readDBRef d
+  T.writeDBRef d . AutoAccounts $ Set.insert i s
 
 idArg :: CP.Type (ID.ID a)
 idArg = ID.ID . pack <$> CP.string

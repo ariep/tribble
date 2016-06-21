@@ -61,6 +61,7 @@ v create github repo
 v create docker file
 v compression of ghcjs output (gives ~3MB js file)
 v use stack as a build tool for client and server
+• split up building of dependencies into fast-moving (plug) and slow-moving
 • check for existence of config file, client/static, runtime-data
 • fork pandoc to prevent future safecopy problems
 • look further at Wercker

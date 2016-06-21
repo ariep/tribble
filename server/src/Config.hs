@@ -31,9 +31,10 @@ type Config
   = ToConfigCode Config'
 
 type Config'
-  =   "host"   :> URI
+  =   "host"      :> URI
         :>: "Hostname of the server (used for redirects and header check), including protocol and port."
-  :*> "oauth2" :> OAuth2Config'
+  :*> Maybe ("bind_port" :> Int :>: "Port to bind the server to.")
+  :*> "oauth2"    :> OAuth2Config'
 
 type OAuth2Config'
   =   "id"     :> Text :>: "ID for the OAuth2 API"

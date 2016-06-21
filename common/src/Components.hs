@@ -38,11 +38,23 @@ type CurrentUser
 currentUser    :: Channel CurrentUser
 currentUser    = Channel [4]
 
-type CurrentAccount
-  = Repeat (Maybe (ID.WithID Account) :!: Eps)
+type ListAccounts
+  = Repeat ([ID.WithID Account] :!: Eps)
 
-currentAccount :: Channel CurrentAccount
-currentAccount = Channel [5]
+listAccounts :: Channel ListAccounts
+listAccounts = Channel [5]
+
+type SetCurrentAccount
+  = Repeat (ID.WithID Account :?: Eps)
+
+setCurrentAccount :: Channel SetCurrentAccount
+setCurrentAccount = Channel [6]
+
+type GetCurrentAccount
+  = Repeat (ID.WithID Account :!: Eps)
+
+getCurrentAccount :: Channel GetCurrentAccount
+getCurrentAccount = Channel [7]
 
 type ExportTest
   = Repeat (
@@ -51,7 +63,7 @@ type ExportTest
     Eps)
 
 exportTest    :: Channel ExportTest
-exportTest    = Channel [6]
+exportTest    = Channel [8]
 
 -- The rational should be a number between 0 and 1, with higher numbers
 -- denoting better matches.
@@ -61,13 +73,13 @@ type FilterQuestions
     Eps)
 
 filterQuestions :: Channel FilterQuestions
-filterQuestions = Channel [7]
+filterQuestions = Channel [9]
 
 type QuestionLabels
   = Repeat (Maybe Text :?: [Label] :!: Eps)
 
 questionLabels :: Channel QuestionLabels
-questionLabels = Channel [8]
+questionLabels = Channel [10]
 
 -- Helper types and functions.
 

@@ -41,21 +41,31 @@ channels state = do
     (Proxy :: Proxy (Decorated Test))
   questionChannels <- crud state _SpecificQuestion QuestionsOverview crudQuestions
     (Proxy :: Proxy (Decorated Question))
-  ln <- atomically $ TChan.dupTChan (notifications state)
   return $ testChannels ++ questionChannels ++
     [ S.ServeChannel currentUser $
         Co.pre (DB.getCurrentUser state) $ \ user ->
         Co.put user Co.>>
         Co.close
-    , S.ServeChannel currentAccount $ Co.repeat $
+    , S.ServeChannel getCurrentAccount $ Co.repeat $
         Co.pre DB.getCurrentAccount $ \ acc ->
         Co.put acc Co.>>
-        Co.pre_ (liftIO $ waitFor CurrentAccount ln)
+        Co.pre_ (liftIO $ waitFor CurrentAccount (notifications state))
+        Co.close
+    , S.ServeChannel setCurrentAccount $ Co.repeat $
+        Co.get Co.>>= \ acc ->
+        Co.pre_ (DB.setCurrentAccount acc >>
+          liftIO (atomically $ notify (Set.singleton CurrentAccount) state))
+        Co.close
+    , S.ServeChannel listAccounts $ Co.repeat $
+        Co.pre (DB.getCurrentUser state) $ \ user ->
+        Co.pre (DB.run (globalStore state) $ DB.getAccounts $ ID.__ID user) $
+          \ accounts -> Co.put accounts Co.>>
+        Co.pre_ (liftIO $ waitFor Accounts (notifications state))
         Co.close
     , S.ServeChannel allTests $ Co.repeat $
         Co.pre  (DB.runNotify state [] DB.getAll) $ \ xs ->
         Co.put xs Co.>>
-        Co.pre_ (liftIO $ waitFor TestsOverview ln)
+        Co.pre_ (liftIO $ waitFor TestsOverview (notifications state))
         Co.close
     , S.ServeChannel uploadImage $ Co.repeat $
         Co.get Co.>>= \ (Ch.File b) ->
@@ -78,19 +88,10 @@ queryService state c q = S.ServeChannel c $ Co.repeat $
   Co.pre (DB.runNotify state [] $ q a) $ \ b ->
   Co.put b Co.>> Co.close
 
--- pureService :: (SafeCopy a, SafeCopy b) =>
---   Ch.Channel (Co.Repeat (a Co.:?: b Co.:!: Co.Eps)) ->
---   (a -> b) ->
---   S.ServedChannel
--- pureService c f = S.ServeChannel c $ Co.repeat $
---   Co.get Co.>>= \ a ->
---   Co.put (f a) Co.>> Co.close
-
 crud :: forall a b. (SafeCopy b, Typeable b, a ~ Decorated b)
   => State -> (Prism' Topic (ID.ID a)) -> Topic -> Ch.Token (Ch.CRUD a) -> Proxy a ->
   IO [S.ServedChannel LocalState E]
 crud state specific overview t _ = do
-  localNotifications <- atomically $ TChan.dupTChan (notifications state)
   return
     [ S.ServeChannel (Ch.deleteID t) $ Co.repeat $
         Co.get Co.>>= \ i ->
@@ -122,23 +123,28 @@ crud state specific overview t _ = do
             then Set.insert t' oldInterests
             else Set.delete t' oldInterests
           when (interested && not (Set.member t' oldInterests)) $
+            -- TODO: we should not notify globally here, because there is
+            -- no actual change.
             notify (Set.singleton t') state)
         Co.close
     , S.ServeChannel (Ch.changeID t) $ Co.repeat $
         Co.pre S.getLocalState $ \ ls ->
-        Co.pre (liftIO $ waitForSet ls localNotifications specific) $ \ i ->
+        Co.pre (liftIO $ waitForSet ls (notifications state) specific) $ \ i ->
         Co.pre (DB.runNotify state [] $ mapM ID.lookup i) $ \ w ->
         Co.put w Co.>> Co.close
     ]
 
 waitForSet :: (Ord a) =>
   LocalState -> TChan.TChan (Set.Set Topic) -> Prism' Topic a -> IO [a]
-waitForSet ls ln prism = waitFurther where
-  waitFurther = look >>= \case
-    [] -> waitFurther
+waitForSet ls n prism = do
+  ln <- atomically $ TChan.dupTChan n
+  waitFurther ln
+ where
+  waitFurther ln = look ln >>= \case
+    [] -> waitFurther ln
     xs -> return xs
-  look = atomically $ do
-    t <- wait ln
+  look ln = atomically $ do
+    t <- TChan.readTChan ln
     i <- TVar.readTVar $ localInterests ls
     return $ mapMaybe (preview prism) $
       Set.toList (t `Set.intersection` i)

@@ -5,20 +5,22 @@
 {-# LANGUAGE FlexibleInstances #-}
 module Main where
 
-import Common
+import           Accounts
+import           Common
 import qualified Components
-import Questions
-import Test
-import Types
+import           Imports
+import           Questions
+import           Test
+import           Types
 
 import qualified Web.Channel        as Ch
 import qualified Web.Channel.Client as Ch
 import qualified Web.Channel.Client.Cache.ReadWrite as Cache
 import           Web.Widgets
-import           Web.Widgets.Upload (file)
+import qualified Web.Widgets.Modal  as Modal
 
 import           Control.Lens            (view)
-import           Control.Monad.IO.Class  (MonadIO,liftIO)
+import           Control.Monad.IO.Class  (MonadIO, liftIO)
 import qualified Data.ID                  as ID
 import qualified Data.Map                 as Map
 import qualified Data.Set                 as Set
@@ -37,21 +39,37 @@ debug = True
 
 main :: IO ()
 main = mainWidgetWithHead headSection $ do
-  server <- (\ h -> "ws://" ++ h ++ "/") <$> getHost
+  server <- getWebsocketServer
+  liftIO . putStrLn $ "connecting to websocket server at: " ++ server
   Ch.runC debug server $ do
     user <- holdDynInit (constDyn noUser) =<<
       Ch.get Components.currentUser
-    account <- holdDyn Nothing =<< Ch.getMany Components.currentAccount
-    header user account
-    divClass "container" . divClass "row" $ mdo
-      questionCache <- Cache.createEmpty
-        (Ch.changeID Components.crudQuestions)
-      -- testCache <- Cache.createEmpty (Ch.changeID crudTests)
-      tests <- Ch.getDyn Components.allTests [] >>= mapDyn filterDeleted
-      currentTest <- divClass "col-md-7 col-lg-8" $
-        displayTest user tests questionCache
-      divClass "col-md-5 col-lg-4" $ questions user currentTest questionCache
-      return ()
+    mAccount <- holdDyn Nothing =<<
+      (fmap Just <$> Ch.getMany Components.getCurrentAccount)
+    accounts <- holdDyn [] =<< Ch.getMany Components.listAccounts
+    header user mAccount
+    forDynM_ mAccount $ \case
+      Nothing      -> do
+        pb <- getPostBuild
+        (Ch.sendMany Components.setCurrentAccount =<<) $ Modal.modal pb $
+          \ h b f () -> do
+            h . el "h3" $ text "In welke gebruikersgroep wil je werken?"
+            accountE <- b $ do
+              -- newAccountE <- newTest user
+              pickAccountE <- pickAccount accounts
+              return $ leftmost [pickAccountE]
+            -- cancel <- f $ buttonClass "btn btn-default" "Annuleer"
+            return (accountE, never)
+        return ()
+      Just account -> divClass "container" . divClass "row" $ mdo
+        questionCache <- Cache.createEmpty
+          (Ch.changeID Components.crudQuestions)
+        -- testCache <- Cache.createEmpty (Ch.changeID crudTests)
+        tests <- Ch.getDyn Components.allTests [] >>= mapDyn filterDeleted
+        currentTest <- divClass "col-md-7 col-lg-8" $
+          displayTest user tests questionCache
+        divClass "col-md-5 col-lg-4" $ questions user currentTest questionCache
+        return ()
 
 headSection = do
   stylesheet

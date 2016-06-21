@@ -27,10 +27,14 @@ data Privilege
   = GlobalAdministrator
   | Administrator (ID.ID Account)
   | Editor (ID.ID Account)
-  deriving (Generic, Typeable, Show)
+  deriving (Generic, Typeable, Eq, Show)
 
 data Role
   = Role (ID.ID User) Privilege
+  deriving (Generic, Typeable, Show)
+
+newtype AutoAccounts
+  = AutoAccounts { getAutoAccounts :: Set.Set (ID.ID Account) }
   deriving (Generic, Typeable, Show)
 
 -- Internal state
@@ -50,6 +54,7 @@ data State
 
 data Topic
   = CurrentAccount
+  | Accounts
   | SpecificQuestion (ID.ID (Decorated Question))
   | QuestionsOverview
   | SpecificTest     (ID.ID (Decorated Test    ))
@@ -61,28 +66,31 @@ notify :: Set.Set Topic -> State -> STM ()
 notify topics state = TChan.writeTChan (notifications state) topics
 
 wait :: TChan.TChan (Set.Set Topic) -> STM (Set.Set Topic)
-wait = TChan.readTChan
+wait = TChan.readTChan <=< TChan.dupTChan
 
 waitFor :: Topic -> TChan.TChan (Set.Set Topic) -> IO ()
-waitFor topic c = waitFurther where
-  waitFurther = do
-    t <- atomically $ TChan.readTChan c
+waitFor topic c = do
+  lc <- atomically $ TChan.dupTChan c
+  waitFurther lc
+ where
+  waitFurther lc = do
+    t <- atomically $ TChan.readTChan lc
     if topic `Set.member` t
       then return ()
-      else waitFurther
+      else waitFurther lc
 
 data LocalState
   = LocalState
     { localUser      :: MVar.MVar (Maybe (ID.WithID User))
     , localInterests :: TVar.TVar (Set.Set Topic)
-    , localAccount   :: MVar.MVar (Maybe (ID.WithID Account))
+    , localAccount   :: MVar.MVar (ID.WithID Account)
     }
 
 newLocalState :: State -> IO LocalState
 newLocalState state = LocalState
   <$> MVar.newMVar Nothing
   <*> TVar.newTVarIO Set.empty
-  <*> MVar.newMVar Nothing
+  <*> MVar.newEmptyMVar
 
 -- Exceptions
 
