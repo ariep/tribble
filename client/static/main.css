@@ -122,9 +122,18 @@ div.multi-inline > div
   display: inline;
 }
 
+div.multi
+{
+  padding-top: 0.4em;
+}
 div.multi > div
 {
-  padding: 0.3em;
+  display: flex;
+  padding: 0px;
+}
+div.multi input.form-control
+{
+  margin-bottom: 0 !important;
 }
 label
 {
@@ -136,11 +145,16 @@ label
   font-size: 100%;
 }
 
+h3
+{
+  margin: 0;
+}
+
 /* div.multipleChoiceAnswers input */
 input[type=text]
 {
   display: inline-block;
-  width: 80%;
+  flex-grow: 1;
   margin-left: 0.6em;
   margin-right: 0.6em;
   margin-bottom: 0.3em;
@@ -193,6 +207,15 @@ div.rt-container div.panel-header
 .modal
 {
   overflow: auto;
+}
+.modal-dialog
+{
+  width: 85%;
+}
+.modal-body
+{
+  padding-top: 0;
+  padding-bottom: 0;
 }
 
 div.imagePreview img
