@@ -5,6 +5,6 @@
 client/js/**/*
 client/js
 client/static/**/*
-client/static
+!client/static/main.css
 runtime-data/**/*
 runtime-data
