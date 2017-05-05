@@ -1,36 +1,38 @@
-resolver: lts-5.15
+resolver: lts-7.19
 
 packages:
 - common
 - server
-# - location: /home/arie/dev/web/plug
 - location:
     git: https://github.com/ariep/plug.git
-    commit: 314a25829b689762622c3e7b4fa34e11432a10e1
+    commit: cb36911068d162e7afa05d038847524ddae90e9e
   subdirs:
     - plug-common
     - plug-server
   extra-dep: true
 - location:
     git: https://github.com/ariep/Coroutine.git
-    commit: 4ece5738cc0e204a9c7a4bd2bfba01b8f482553d
+    commit: 19939a1bf73af951e06931fd29eacd45f5761ca8
   extra-dep: true
-# - location: /home/arie/dev/TCache
 - location:
     git: https://github.com/ariep/TCache.git
-    commit: 8edfe575243cb6f304d5c337cf638565b5eb5cfa
+    commit: 21c336e8bd992a5cdc64f48aa41d94d4a775b4b8
   extra-dep: true
 - location:
     git: https://github.com/ariep/ID.git
-    commit: f5ffbb02d3e20feef23fce294946676bbf5d5afc
+    commit: 489623f74274dd360519726ea3358a65f5dfa811
   extra-dep: true
 - location:
     git: https://github.com/ariep/text-index.git
-    commit: c563bd828b5d09b0ed9c4b83762b82c8dec2ee73
+    commit: 8f4453c088a786af89ef4a6079476d58add9b1ed
+  extra-dep: true
+- location:
+    git: https://github.com/llelf/prose.git
+    commit: ee32bef5cc7af41265ede92406943a5e2a60d530
   extra-dep: true
 - location:
     git: https://github.com/ariep/oauth2-google.git
-    commit: 3845964ca341c5818a8a27369d511739dd749606
+    commit: a855fed4104e17212b0ebfe71123d57366458b9e
   extra-dep: true
 - location:
     git: https://github.com/ariep/language-spelling.git
@@ -43,21 +45,14 @@ packages:
   extra-dep: true
 - location:
     git: https://github.com/ariep/configifier.git
-    commit: 6f4421311d08d1755d1487b2153d77715aba8520
+    commit: bec1aaf18abcca1a012c09d6e9cc8679a40faa36
   extra-dep: true
 
 extra-deps:
-  - configifier-0.1.0
-  - cereal-text-0.1.0.1
-  - concurrent-extra-0.7.0.10
-  - console-program-0.4.1.0
-  - directory-1.2.6.3
-  - functor-infix-0.0.3
-  - parsec-extra-0.1.0.5
-
-# Override default flag values for local packages and extra-deps
-flags: {}
-
-# Extra package databases containing global packages
-extra-package-dbs: []
-
+  - console-program-0.4.2.1
+  - data-list-sequences-0.1
+  - functor-infix-0.0.5
+  - http-accept-0.2
+  - parsec-extra-0.2.0.0
+  - unicode-properties-3.2.0.0
+  - wai-util-0.8

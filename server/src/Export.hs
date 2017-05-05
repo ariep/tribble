@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Export
   ( export
   ) where
@@ -44,10 +45,10 @@ export mode format testID = do
   container :: Container
   container = Container (withCurrentDirectory "./runtime-data/export-wd")
 
-suggestedFileName :: Test -> ExportMode -> Format -> String
-suggestedFileName test mode format = prefix ++ title ++ extension format where
-  prefix = modeString mode ++ "."
-  title = Text.unpack $ view name test
+suggestedFileName :: Test -> ExportMode -> Format -> Text
+suggestedFileName test mode format = prefix <> title <> extension format where
+  prefix = modeString mode <> "."
+  title = view name test
 
 -- readFormat :: String -> Format
 -- readFormat "pdf"      = PDF

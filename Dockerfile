@@ -17,8 +17,8 @@ COPY ./common/tribble-common.cabal /home/ph/common/tribble-common.cabal
 COPY ./server/tribble-server.cabal /home/ph/server/tribble-server.cabal
 COPY ./client/tribble-client.cabal /home/ph/client/tribble-client.cabal
 # Build the dependencies of the server.
+ENV PATH /home/ph/.stack/programs/x86_64-linux/ghc-8.0.1/bin:$PATH
 RUN stack build --only-dependencies
-ENV PATH /home/ph/.stack/programs/x86_64-linux/ghc-7.10.3/bin:$PATH
 USER root
 RUN chown ph:ph /home/ph/client
 USER ph

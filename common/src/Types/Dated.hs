@@ -1,4 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Types.Dated
   (
     Dated(..), dates, dated
@@ -14,6 +16,7 @@ module Types.Dated
 import           Control.Lens           (view, over)
 import           Control.Lens.TH        (makeLenses)
 import           Control.Monad.IO.Class (MonadIO, liftIO)
+import qualified Data.Change as Change
 import           Data.Maybe             (isJust)
 import           Data.Time              (UTCTime, getCurrentTime)
 import           Data.Typeable          (Typeable)
@@ -57,3 +60,21 @@ undeleteDated = over (dates . deletionDate) $ const Nothing
 
 updateDated :: UTCTime -> Dated x -> Dated x
 updateDated = over (dates . modificationDate) . const
+
+-- instance Changing UTCTime where
+--   apply = replacing
+
+instance Change.Changing Dates where
+  type Changes Dates =
+    ( Change.Replace UTCTime
+    , Change.Replace UTCTime
+    , Change.Replace (Maybe UTCTime)
+    )
+  apply (c₁, c₂, c₃) =
+      over creationDate     (Change.replacing c₁)
+    . over modificationDate (Change.replacing c₂)
+    . over deletionDate     (Change.replacing c₃)
+
+instance (Change.Changing x) => Change.Changing (Dated x) where
+  type Changes (Dated x) = (Change.Changes Dates, Change.Changes x)
+  apply (c₁, c₂) = over dates (Change.apply c₁) . over dated (Change.apply c₂)

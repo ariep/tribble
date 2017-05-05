@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE Rank2Types #-}
@@ -14,14 +15,16 @@ import qualified Web.Channel                    as Ch
 import qualified Web.Channel.Server             as S
 import qualified Web.Channel.Server.Session     as S
 
-import Control.Concurrent (threadDelay)
 import qualified Data.TCache             as T
 
 import qualified Control.Concurrent.STM.TChan   as TChan
 import qualified Control.Concurrent.STM.TVar    as TVar
+import qualified Control.Concurrent.MVar        as MVar
 import qualified Control.Coroutine.Monadic      as Co
 import           Control.Monad           (filterM)
 import qualified Data.ByteString.Lazy           as BSL
+import qualified Data.Change                    as Change
+import qualified Data.Map                       as Map
 import           Data.Maybe              (mapMaybe)
 import qualified Data.Search.Results            as Results
 import qualified Data.Set                       as Set
@@ -35,119 +38,231 @@ import qualified Web.OAuth2.Google              as OAuth
 
 import qualified Data.Text as Text
 
-channels :: State -> IO [S.ServedChannel LocalState E]
-channels state = do
-  testChannels <- crud state _SpecificTest TestsOverview crudTests
-    (Proxy :: Proxy (Decorated Test))
-  questionChannels <- crud state _SpecificQuestion QuestionsOverview crudQuestions
-    (Proxy :: Proxy (Decorated Question))
-  return $ testChannels ++ questionChannels ++
-    [ S.ServeChannel currentUser $
+channels :: Text -> S.Services State LocalState E
+channels loginLink_ =
+       editingQuestions
+    <> ipp ippTests
+        (idMap <$> DB.getAll)
+        (waitChange . localTestNotify)
+        (notifyChange . localTestNotify)
+        DB.changeTests
+    <> ipp ippQuestions
+        (idMap <$> DB.getAll)
+        (waitChange . localQuestionNotify)
+        (notifyChange . localQuestionNotify)
+        DB.changeQuestions
+    <> S.Services
+    [ const $ S.ServeChannel loginLink $ Co.put loginLink_ Co.>> Co.close
+    , \ state -> S.ServeChannel currentUser $
         Co.pre (DB.getCurrentUser state) $ \ user ->
         Co.put user Co.>>
         Co.close
-    , S.ServeChannel getCurrentAccount $ Co.repeat $
+    , const $ S.ServeChannel getCurrentAccount $ Co.repeat $
         Co.pre DB.getCurrentAccount $ \ acc ->
         Co.put acc Co.>>
-        Co.pre_ (liftIO $ waitFor CurrentAccount (notifications state))
+        Co.pre_ (liftIO . waitForAccountChange =<< S.getLocalState)
         Co.close
-    , S.ServeChannel setCurrentAccount $ Co.repeat $
+    , const $ S.ServeChannel setCurrentAccount $ Co.repeat $
         Co.get Co.>>= \ acc ->
         Co.pre_ (DB.setCurrentAccount acc >>
-          liftIO (atomically $ notify (Set.singleton CurrentAccount) state))
+          (liftIO . signalAccountChange =<< S.getLocalState))
         Co.close
-    , S.ServeChannel listAccounts $ Co.repeat $
+    , \ state -> S.ServeChannel listAccounts $ Co.repeat $
         Co.pre (DB.getCurrentUser state) $ \ user ->
-        Co.pre (DB.run (globalStore state) $ DB.getAccounts $ ID.__ID user) $
-          \ accounts -> Co.put accounts Co.>>
-        Co.pre_ (liftIO $ waitFor Accounts (notifications state))
+        Co.pre (DB.runIn (globalStore state) $ DB.getAccounts $ ID.__ID user)
+          $ \ accounts -> Co.put accounts Co.>>
+        Co.pre_ (liftIO $ block)
         Co.close
-    , S.ServeChannel allTests $ Co.repeat $
-        Co.pre  (DB.runNotify state [] DB.getAll) $ \ xs ->
-        Co.put xs Co.>>
-        Co.pre_ (liftIO $ waitFor TestsOverview (notifications state))
-        Co.close
-    , S.ServeChannel uploadImage $ Co.repeat $
+    , \ state -> S.ServeChannel newTest $ Co.repeat $
+        Co.get Co.>>= \ dTest ->
+        Co.pre (DB.run state $ ID.addNew dTest) $ \ i ->
+        Co.pre_ (do
+          lns <- liftIO . MVar.readMVar =<< localNotifications <$> S.getLocalState
+          cID <- S.getConnectionID
+          liftIO . atomically $ notifyChange (localTestNotify lns)
+            (undefined, cID, [Change.MapAdd i (ID.WithID i dTest)])
+          ) $
+        Co.put i Co.>> Co.close
+    , \ state -> S.ServeChannel newQuestion $ Co.repeat $
+        Co.get Co.>>= \ dQ ->
+        Co.pre (DB.run state $ ID.addNew dQ) $ \ i ->
+        Co.pre_ (do
+          lns <- liftIO . MVar.readMVar =<< localNotifications <$> S.getLocalState
+          cID <- S.getConnectionID
+          liftIO . atomically $ notifyChange (localQuestionNotify lns)
+            (undefined, cID, [Change.MapAdd i (ID.WithID i dQ)])
+          ) $
+        Co.put i Co.>> Co.close
+    , const $ S.ServeChannel uploadImage $ Co.repeat $
         Co.get Co.>>= \ (Ch.File b) ->
         Co.pre (liftIO $ saveFileRandomName "images/" b) $ \ fn ->
-        Co.put fn Co.>>
+        Co.put (Text.pack fn) Co.>>
         Co.close
-    , queryService state exportTest $ \ (testID, mode, format) ->
+    , queryService exportTest $ \ (testID, mode, format) ->
         fmap remoteUrl <$> Export.export mode format testID
-    , queryService state filterQuestions searchQuestions
-    , queryService state questionLabels searchQuestionLabel
+    , queryService filterQuestions searchQuestions
+    , queryService questionLabels searchQuestionLabel
     ]
+    []
 
 queryService :: (SafeCopy a, SafeCopy b) =>
-  State ->
   Ch.Channel (Co.Repeat (a Co.:?: b Co.:!: Co.Eps)) ->
   (a -> DB.DB b) ->
+  State ->
   S.ServedChannel LocalState E
-queryService state c q = S.ServeChannel c $ Co.repeat $
+queryService c q state = S.ServeChannel c $ Co.repeat $
   Co.get Co.>>= \ a ->
-  Co.pre (DB.runNotify state [] $ q a) $ \ b ->
+  Co.pre (DB.run state $ q a) $ \ b ->
   Co.put b Co.>> Co.close
 
-crud :: forall a b. (SafeCopy b, Typeable b, a ~ Decorated b)
-  => State -> (Prism' Topic (ID.ID a)) -> Topic -> Ch.Token (Ch.CRUD a) -> Proxy a ->
-  IO [S.ServedChannel LocalState E]
-crud state specific overview t _ = do
-  return
-    [ S.ServeChannel (Ch.deleteID t) $ Co.repeat $
-        Co.get Co.>>= \ i ->
-        Co.pre_ (DB.runNotify state [overview] $ ID.delete =<< ID.refM i)
-        Co.close
-    , S.ServeChannel (Ch.createID t) $ Co.repeat $
-        Co.get Co.>>= \ (x :: a) ->
-        Co.pre (DB.runNotify state [overview] $ ID.addNew x) $ \ i ->
-        Co.put i Co.>>
-        Co.close
-    , queryService state (Ch.lookupID t) ID.lookupMaybe
-    , S.ServeChannel (Ch.updateID t) $ Co.repeat $
-        Co.get Co.>>= \ (x :: ID.WithID a) ->
-        Co.pre_ (DB.runNotify state [overview, review specific $ ID.__ID x] . void $ ID.write x)
-        Co.close
-    , S.ServeChannel (Ch.markDeletedID t) $ Co.repeat $
-        Co.get Co.>>= \ i ->
-        Co.pre_ (DB.runNotify state [overview, review specific i] $ do
-          d <- liftIO getCurrentTime
-          overM (ID._IDLens . authored . labelled) (deleteDated d) i
-          return ())
-        Co.close
-    , S.ServeChannel (Ch.interestID t) $ Co.repeat $
-        Co.get Co.>>= \ (i, interested) -> let t' = review specific i in
-        Co.pre S.getLocalState $ \ ls ->
-        Co.pre_ (liftIO $ atomically $ do
-          oldInterests <- TVar.readTVar (localInterests ls)
-          TVar.writeTVar (localInterests ls) $ if interested
-            then Set.insert t' oldInterests
-            else Set.delete t' oldInterests
-          when (interested && not (Set.member t' oldInterests)) $
-            -- TODO: we should not notify globally here, because there is
-            -- no actual change.
-            notify (Set.singleton t') state)
-        Co.close
-    , S.ServeChannel (Ch.changeID t) $ Co.repeat $
-        Co.pre S.getLocalState $ \ ls ->
-        Co.pre (liftIO $ waitForSet ls (notifications state) specific) $ \ i ->
-        Co.pre (DB.runNotify state [] $ mapM ID.lookup i) $ \ w ->
-        Co.put w Co.>> Co.close
+editingQuestions :: S.Services State LocalState E
+editingQuestions = S.Services
+  [ \ state -> S.ServeChannel initialEditing $ Co.repeat $
+    Co.pre (liftIO . TVar.readTVarIO . ephPart . ephemeral =<< DB.getStore state) $ \ s ->
+    Co.put (fmap (Set.map snd) s) Co.>>
+    Co.pre_ (liftIO . waitForAccountChange =<< S.getLocalState)
+    Co.close
+  , \ state -> S.ServeChannel pullEditing $ Co.repeat $
+    Co.pre (do
+      ls <- S.getLocalState
+      lns <- liftIO . MVar.readMVar $ localNotifications ls
+      lID <- S.getConnectionID
+      (qID, user, status) <- liftIO . atomically $ TChan.readTChan $ changeChan lns
+      return $ editingChanges qID user status
+      ) $ \ changes ->
+      Co.put changes Co.>> Co.close
+  , \ state -> S.ServeChannel pushEditing $ Co.repeat $
+    Co.get Co.>>= \ (qID, status) -> Co.pre_ (do
+      store <- DB.getStore state
+      user <- DB.getCurrentUser state
+      conID <- S.getConnectionID
+      shouldNotify <- liftIO . atomically $ do
+        let tvar = ephPart $ ephemeral store
+        let getUsers = fmap (Set.map snd) . Map.lookup qID <$> TVar.readTVar tvar
+        old <- getUsers
+        TVar.modifyTVar' tvar $ case status of
+          True  -> Map.insertWith Set.union qID $ Set.singleton (conID, user)
+          False -> Map.adjust (Set.delete (conID, user)) qID
+        new <- getUsers
+        return $ old /= new
+      when shouldNotify $ do
+        lns <- liftIO . MVar.readMVar . localNotifications =<< S.getLocalState
+        liftIO . atomically $ TChan.writeTChan (changeChan lns) (qID, user, status)
+      )
+    Co.close
+  ]
+  [ \ state ls conID -> do
+      MVar.tryTakeMVar (localStore ls) >>= \case
+        Nothing    -> return ()
+        Just store -> do
+          let tvar = ephPart . ephemeral $ store
+          lns <- MVar.readMVar $ localNotifications ls
+          atomically $ do
+            let getUsers = Map.map (Set.map snd) <$> TVar.readTVar tvar
+            old <- getUsers
+            TVar.modifyTVar' tvar $ Map.map $ Set.filter $
+              (/= conID) . fst
+            new <- getUsers
+            let toNotify = Map.differenceWith
+                  (\ o n -> let d = Set.difference o n in
+                    if Set.null d then Nothing else Just d)
+                  old new
+            for_ (Map.toList toNotify) $ \ (qID, users) ->
+              for_ (Set.toList users) $ \ user ->
+                TChan.writeTChan (changeChan lns) (qID, user, False)
+  ]
+ where
+  ephPart :: Ephemeral AccountS -> TVar.TVar EditingQuestionsServer
+  ephPart (AccountEphemeral tvar) = tvar
+  changeChan = localEditingNotify
+  editingChanges qID user True  =
+    [ Change.MapModify qID [Change.SetAdd user]
+    , Change.MapEnsure qID Set.empty
+    ]
+  editingChanges qID user False =
+    [ Change.MapModify qID [Change.SetDelete user]
     ]
 
-waitForSet :: (Ord a) =>
-  LocalState -> TChan.TChan (Set.Set Topic) -> Prism' Topic a -> IO [a]
-waitForSet ls n prism = do
-  ln <- atomically $ TChan.dupTChan n
-  waitFurther ln
- where
-  waitFurther ln = look ln >>= \case
-    [] -> waitFurther ln
-    xs -> return xs
-  look ln = atomically $ do
-    t <- TChan.readTChan ln
-    i <- TVar.readTVar $ localInterests ls
-    return $ mapMaybe (preview prism) $
-      Set.toList (t `Set.intersection` i)
+-- Serve an "InitialPushPull" channel.
+ipp :: forall a. (Change.Changing a, SafeCopy a, SafeCopy (Changes a)) =>
+  Ch.Token (Ch.InitialPushPull a) ->
+  DB.DB a ->
+  (LocalNotifications -> STM (ChangeInfo a)) ->
+  (LocalNotifications -> (ChangeInfo a) -> STM ()) ->
+  (Changes a -> DB.DB ()) ->
+  S.Services State LocalState E
+ipp t getInitial waitChange notifyChange applyChange = S.Services
+  [ \ state -> S.ServeChannel (Ch.initial t) $ Co.repeat $
+    Co.pre (DB.run state getInitial) $ \ a ->
+    Co.put a Co.>>
+    Co.pre_ (liftIO . waitForAccountChange =<< S.getLocalState)
+    Co.close
+  , const $ S.ServeChannel (Ch.pullChange t) $ Co.repeat $
+    Co.pre (do
+      ls <- S.getLocalState
+      lns <- liftIO . MVar.readMVar $ localNotifications ls
+      lID <- S.getConnectionID
+      (_, i, c) <- liftIO . atomically $ waitChange lns
+      -- For now, send out the change even if it originated at this client.
+      -- return $ if i == lID
+      --   then mempty
+      --   else c
+      return c
+      ) $ \ c ->
+      Co.put c Co.>> Co.close
+  , \ state -> S.ServeChannel (Ch.pushChange t) $ Co.repeat $
+    Co.get Co.>>= \ c -> Co.pre_ (do
+      DB.run state (applyChange c)
+      ls <- S.getLocalState
+      lns <- liftIO . MVar.readMVar $ localNotifications ls
+      lID <- S.getConnectionID
+      liftIO . atomically $ notifyChange lns (undefined, lID, c)
+      )
+    Co.close
+  ]
+  []
+
+-- Serve an "InitialPushPull" channel from ephemeral storage.
+ippEphemeral :: forall a. (Show a,
+  Change.Changing a, SafeCopy a, SafeCopy (Changes a))
+  => State
+  -> Ch.Token (Ch.InitialPushPull a)
+  -> (Ephemeral AccountS -> TVar.TVar a)
+  -> (LocalNotifications -> ChangeChan a)
+  -> [S.ServedChannel LocalState E]
+ippEphemeral state t ephPart changeChan =
+  [ S.ServeChannel (Ch.initial t) $ Co.repeat $
+    Co.pre (liftIO . TVar.readTVarIO . ephPart . ephemeral =<< DB.getStore state) $ \ a ->
+    Co.put a Co.>>
+    Co.pre_ (liftIO . waitForAccountChange =<< S.getLocalState)
+    Co.close
+  , S.ServeChannel (Ch.pullChange t) $ Co.repeat $
+    Co.pre (do
+      ls <- S.getLocalState
+      lns <- liftIO . MVar.readMVar $ localNotifications ls
+      lID <- S.getConnectionID
+      (_, i, c) <- liftIO . atomically $ waitChange $ changeChan lns
+      -- For now, send out the change even if it originated at this client.
+      -- return $ if i == lID
+      --   then mempty
+      --   else c
+      return c
+      ) $ \ c ->
+      Co.put c Co.>> Co.close
+  , S.ServeChannel (Ch.pushChange t) $ Co.repeat $
+    Co.get Co.>>= \ c -> Co.pre_ (do
+      store <- DB.getStore state
+      liftIO . atomically $ TVar.modifyTVar' (ephPart $ ephemeral store) (Change.apply c)
+      liftIO . putStrLn . ("New ephemeral: " <>) . show =<<
+        liftIO (TVar.readTVarIO $ ephPart $ ephemeral store)
+      ls <- S.getLocalState
+      lns <- liftIO . MVar.readMVar $ localNotifications ls
+      lID <- S.getConnectionID
+      liftIO . atomically $ notifyChange (changeChan lns) (undefined, lID, c)
+      )
+    Co.close
+  ]
+
 
 saveFileRandomName :: FilePath -> BSL.ByteString -> IO FilePath
 saveFileRandomName dir b = do

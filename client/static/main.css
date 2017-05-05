@@ -52,7 +52,8 @@ div.testHeader
 {
   padding-top: 0;
   /* background-color: #f3f3f3; */
-  background-color: rgba(0,0,0,0.1);
+  /* background-color: rgba(0,0,0,0.1); */
+  border: 1px dashed lightgrey;
 }
 ol.multiple-choice
 {
@@ -210,6 +211,7 @@ div.rt-container div.panel-header
 }
 .modal-dialog
 {
+  margin-top: 10em;
   width: 85%;
 }
 .modal-body
@@ -263,3 +265,10 @@ div.imagePreview img
     padding: 0;
 }
 
+div.warning
+{
+  float: right;
+  background-color: #ffcccc;
+  padding: 0.3em;
+  font-weight: bold;
+}

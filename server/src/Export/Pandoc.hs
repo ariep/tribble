@@ -44,24 +44,23 @@ renderTest mode name qs = P.setTitle (textP name) . P.doc $
     go i (Left x  : xs) = Left x       : go i        xs
     go i (Right x : xs) = Right (i, x) : go (succ i) xs
   renderText :: RichText -> P.Blocks
-  renderText (Pandoc b) = P.fromList b
-  renderQuestion :: (Int,Question) -> P.Blocks
-  renderQuestion (i, q) = let Pandoc b = view question q in
-    P.orderedListWith (i, P.Decimal, P.Period) . (: []) $
-      P.fromList b <> case view answer q of
-        Open (Pandoc a)       -> case mode of
-          OnlyQuestions -> mempty
-          WithAnswers   -> P.fromList $ strong a
-        m@(MultipleChoice {}) -> P.orderedListWith
-          (1, P.UpperAlpha, P.OneParen) $ map renderChoice answers
-         where
-          answers :: [(Bool, RichText)]
-          -- answers = view choices m `orderBy` view order m
-          answers = sortOn (textLength . snd) $ view choices m
-          renderChoice :: (Bool,RichText) -> P.Blocks
-          renderChoice (corr,Pandoc t) = P.fromList $ case mode of
-            OnlyQuestions -> t
-            WithAnswers   -> (if corr then strong else strikeout) t
+  renderText = P.fromList . createPandoc
+  renderQuestion :: (Int, Question) -> P.Blocks
+  renderQuestion (i, q) = P.orderedListWith (i, P.Decimal, P.Period) . (: []) $
+    P.fromList (createPandoc $ view question q) <> case view answer q of
+      Open a                -> case mode of
+        OnlyQuestions -> mempty
+        WithAnswers   -> P.fromList $ strong $ createPandoc a
+      m@(MultipleChoice {}) -> P.orderedListWith
+        (1, P.UpperAlpha, P.OneParen) $ map renderChoice answers
+       where
+        answers :: [(Bool, RichText)]
+        -- answers = view choices m `orderBy` view order m
+        answers = sortOn (textLength . snd) $ view choices m
+        renderChoice :: (Bool, RichText) -> P.Blocks
+        renderChoice (corr, t) = P.fromList $ case mode of
+          OnlyQuestions -> createPandoc t
+          WithAnswers   -> (if corr then strong else strikeout) $ createPandoc t
 
 strong :: [P.Block] -> [P.Block]
 strong = map . P.walk $ P.Strong . (: [])
@@ -77,3 +76,14 @@ textLength = Text.length . renderPlain
 
 textP :: Text -> P.Inlines
 textP = P.str . Text.unpack
+
+createPandoc :: RichText -> [P.Block]
+createPandoc = either (return . P.Plain . return . P.Str . show) r .
+  P.readHtml P.def . Text.unpack . rtToHtml
+    -- The below alternative gives a runtime error in the browser!
+    -- (Pandoc.def
+    --   { Pandoc.readerSmart = True
+    --   }
+    -- :: Pandoc.ReaderOptions)
+ where
+  r (P.Pandoc _ p) = p

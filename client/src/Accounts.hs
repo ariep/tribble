@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Accounts where
 
 import           Common
@@ -20,8 +21,8 @@ pickAccount accounts = fmap switchPromptlyDyn . mapDyn leftmost =<<
  where
   accountChoice :: Dynamic t (ID.WithID Account)
     -> C t m (Event t (ID.WithID Account))
-  accountChoice dAccount = forDynEvent dAccount $
-    \ a -> divClass "buttonRow" $ do
+  accountChoice dAccount = dynEvent $ ffor dAccount $ \ a ->
+    divClass "buttonRow" $ do
       pickE <- buttonClass "btn btn-default fill" $
-        ((\ (Account t) -> Text.unpack t) . view ID.object) a
+        ((\ (Account t) -> t) . view ID.object) a
       return $ a <$ pickE

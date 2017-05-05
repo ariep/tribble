@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 module Main where
 
 import           Common
@@ -32,21 +33,21 @@ main = do
   CP.interactive $ commands globalStore store
 
 -- The tree of possible commands of the program.
-commands :: DB.Store -> DB.Store -> CP.Commands IO
+commands :: DB.Store GlobalS -> DB.Store AccountS -> CP.Commands IO
 commands globalStore store = Node
   (CP.command "DB" "Manage the database." . CP.io . CP.showUsage $ commands globalStore store)
   [
     Node (CP.command "list" "" . CP.io . CP.showUsage $ commands globalStore store)
-      [ Node (CP.command "questions" "List questions." $ CP.io . (>>= mapM_ print) . DB.run store $
+      [ Node (CP.command "questions" "List questions." $ CP.io . (>>= mapM_ print) . DB.runIn store $
           (ID.listWithID :: DB.DB [ID.WithID (Decorated Question)])
         ) []
-      , Node (CP.command "tests" "List tests." $ CP.io . (>>= mapM_ print) . DB.run store $
+      , Node (CP.command "tests" "List tests." $ CP.io . (>>= mapM_ print) . DB.runIn store $
           (ID.listWithID :: DB.DB [ID.WithID (Decorated Test)])
         ) []
       ]
   , Node (CP.command "export" "" . CP.io . CP.showUsage $ commands globalStore store)
       [ flip Node [] $ CP.command "questions" "Export questions." $ CP.io $
-        (>>= writeFile "questions.hs" . show) . DB.run store $
+        (>>= writeFile "questions.hs" . show) . DB.runIn store $
         (ID.listWithID :: DB.DB [ID.WithID (Decorated Question)])
       ]
   , flip Node [] $ CP.command "import" "" . CP.io $ do
@@ -55,25 +56,25 @@ commands globalStore store = Node
       [ Node (CP.command "question" "Show a specific question." $
           CP.withNonOption idArg $ \ (i :: ID.ID (Decorated Question)) -> CP.io
             . (>>= maybe (putStrLn "Question not found.") print)
-            . DB.run store $ ID.lookupMaybe i
+            . DB.runIn store $ ID.lookupMaybe i
         ) []
       , Node (CP.command "test" "Show a specific test." $
           CP.withNonOption idArg $ \ (i :: ID.ID (Decorated Test)) -> CP.io
             . (>>= maybe (putStrLn "Test not found.") print)
-            . DB.run store $ ID.lookupMaybe i
+            . DB.runIn store $ ID.lookupMaybe i
         ) []
       ]
   , Node (CP.command "undelete" "" . CP.io . CP.showUsage $ commands globalStore store)
       [ Node (CP.command "question" "Undelete a question." $
           CP.withNonOption idArg $ \ (i :: ID.ID (Decorated Question)) -> CP.io $ do
-            m <- DB.run store $
+            m <- DB.runIn store $
               overM (ID.refLens . authored . labelled) undeleteDated
                 =<< ID.refM i
             putStrLn . maybe "Failed" (const "Succeeded") $ m
         ) []
       , Node (CP.command "test" "Undelete a test." $
           CP.withNonOption idArg $ \ (i :: ID.ID (Decorated Test)) -> CP.io $ do
-            m <- DB.run store $
+            m <- DB.runIn store $
               overM (ID.refLens . authored . labelled) undeleteDated
                 =<< ID.refM i
             putStrLn . maybe "Failed" (const "Succeeded") $ m
@@ -81,35 +82,35 @@ commands globalStore store = Node
       ]
   , Node (CP.command "new" "" . CP.io . CP.showUsage $ commands globalStore store)
       [ Node (CP.command "question" "Add a new question." . CP.io
-          $ (DB.run store . ID.addNew =<< (input :: IO (Decorated Question)))
+          $ (DB.runIn store . ID.addNew =<< (input :: IO (Decorated Question)))
             >> putStrLn "Question added."
           ) []
       , Node (CP.command "test" "Add a new test." . CP.io
-          $ (DB.run store . ID.addNew =<< (input :: IO (Decorated Test)))
+          $ (DB.runIn store . ID.addNew =<< (input :: IO (Decorated Test)))
             >> putStrLn "Test added."
           ) []
       , Node (CP.command "account" "Add a new account." . CP.io
-          $ (DB.run globalStore . ID.addNew =<< (input :: IO Account))
+          $ (DB.runIn globalStore . ID.addNew =<< (input :: IO Account))
             >> putStrLn "Account added."
           ) []
       , Node (CP.command "role" "Add a new role." . CP.io
-          $ (DB.run globalStore . T.newDBRef =<< (input :: IO Role))
+          $ (DB.runIn globalStore . T.newDBRef =<< (input :: IO Role))
             >> putStrLn "Role added."
           ) []
       ]
   , Node (CP.command "add" "" . CP.io . CP.showUsage $ commands globalStore store)
     [ Node (CP.command "autoaccount" "Mark an account as to be added to new users automatically." . CP.io
-       $ (DB.run globalStore . addAuto =<< (input :: IO (ID.ID Account)))
+       $ (DB.runIn globalStore . addAuto =<< (input :: IO (ID.ID Account)))
          >> putStrLn "Account marked."
        ) []
     ]
   ]
 
-importOld :: Store -> IO ()
+importOld :: Store AccountS -> IO ()
 importOld store = do
   user <- input
-  DB.run store $ mapM_ T.newDBRef $ map (addAuthor user) OldData.questions
-  DB.run store $ mapM_ T.newDBRef $ map (addAuthor user) OldData.tests
+  DB.runIn store $ mapM_ T.newDBRef $ map (addAuthor user) OldData.questions
+  DB.runIn store $ mapM_ T.newDBRef $ map (addAuthor user) OldData.tests
  where
   addAuthor :: Author -> ID.WithID x -> ID.WithID (Authored x)
   addAuthor user = over ID.object $ Authored user

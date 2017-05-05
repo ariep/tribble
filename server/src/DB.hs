@@ -1,17 +1,22 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 module DB
-  ( Stores
+  ( AccountStores
   , Store
   , initialiseGlobal
-  , finalise
+  , getStore
+  , finaliseStore
   , accountStore
   , getCurrentUser
   , getCurrentAccount
   , setCurrentAccount
   , getAccounts
+
+  , changeTests
+  , changeQuestions
 
   , idIndex
   , questionIndex
@@ -19,44 +24,46 @@ module DB
   , questionLabelTextIndex
 
   , DB
+  , runIn
   , run
-  , runNotify
   , T.Key
   , getAll, getAllIDs
   ) where
 
 import Common
+import Components (IDMap)
 import Imports
 import Types
 
-import qualified Control.Concurrent.MVar     as MVar
+import qualified Control.Concurrent.MVar      as MVar
 import           Control.Monad.Identity (Identity(Identity))
 import           Control.Monad.IO.Class (MonadIO, liftIO)
 import           Control.Monad.Reader   (ReaderT(ReaderT), runReaderT, ask)
-import qualified Data.Map                  as Map
+import qualified Data.Change                  as Ch
+import qualified Data.Map                     as Map
 import           Data.Maybe             (catMaybes, mapMaybe, listToMaybe)
 import           Data.Ord               (Down)
-import qualified Data.OrdPSQ               as OrdPSQ
-import qualified Data.OrdPSQ.Internal      as OrdPSQ
-import qualified Data.SafeCopy             as SC
-import qualified Data.Serialize.Get        as C
-import qualified Data.Serialize.Put        as C
-import qualified Data.Set                  as Set
-import qualified Data.TCache               as T
-import qualified Data.TCache.Defs          as T
-import qualified Data.TCache.ID            as ID
-import qualified Data.TCache.Index         as T
-import qualified Data.TCache.Index.Map     as IndexMap
-import qualified Data.TCache.Index.Text    as IndexText
-import qualified Data.Text                 as Text
-import qualified Data.Text.Index           as TextIndex
-import qualified Data.TST                  as TST
+import qualified Data.OrdPSQ                  as OrdPSQ
+import qualified Data.OrdPSQ.Internal         as OrdPSQ
+import qualified Data.SafeCopy                as SC
+import qualified Data.Serialize.Get           as C
+import qualified Data.Serialize.Put           as C
+import qualified Data.Set                     as Set
+import qualified Data.TCache                  as T
+import qualified Data.TCache.Defs             as T
+import qualified Data.TCache.ID               as ID
+import qualified Data.TCache.Index            as T
+import qualified Data.TCache.Index.Map        as IndexMap
+import qualified Data.TCache.Index.Text       as IndexText
+import qualified Data.Text                    as Text
+import qualified Data.Text.Index              as TextIndex
+import qualified Data.TST                     as TST
 import           Data.Typeable          (Typeable)
 import           GHC.Generics           (Generic)
-import qualified Text.Pandoc               as Pandoc
-import qualified Web.Channel.Server         as S
-import qualified Web.Channel.Server.Session as S
-import qualified Web.OAuth2.Google          as OAuth
+import qualified Text.Pandoc                  as Pandoc
+import qualified Web.Channel.Server           as S
+import qualified Web.Channel.Server.Session   as S
+import qualified Web.OAuth2.Google            as OAuth
 
 
 -- Users and accounts
@@ -67,11 +74,30 @@ getCurrentUser state = do
   liftIO (MVar.readMVar mvar) >>= \case
     Just u  -> return u
     Nothing -> do
-      oauthUser <- S.getUser
-      u <- run (globalStore state) $
-        lookupUser (GoogleID $ OAuth.id oauthUser) (OAuth.name oauthUser)
+      u <- S.getUser >>= \case
+        Just oauthUser -> runIn (globalStore state) $
+          lookupUser (GoogleID $ OAuth.id oauthUser) (OAuth.name oauthUser)
+        Nothing        -> runIn (globalStore state) $
+          lookupUnregistered
       liftIO $ MVar.modifyMVar_ mvar (const $ return $ Just u)
       return u
+
+lookupUnregistered :: DB.DB (ID.WithID User)
+lookupUnregistered = do
+  uKeys <- IndexMap.lookup userExtIDIndex unregisteredExtID
+  i <- if Set.null uKeys
+    -- The special unregistered user does not exist, so create it.
+    then do
+      i <- ID.addNew user
+      -- Probably the test account doesn't exist either in this case.
+      a <- ID.addNew $ Account $ Text.pack "Testomgeving"
+      -- Make the unregistered user an editor of the test account.
+      T.newDBRef $ Role i $ Editor a
+      return i
+    else return $ ID.fromKey $ Set.elemAt 0 uKeys
+  return $ ID.WithID i user
+ where
+  user = User unregisteredExtID (Text.pack "Ongeregistreerd")
 
 lookupUser :: UserExtID -> UserName -> DB.DB (ID.WithID User)
 lookupUser uid uName = do
@@ -96,10 +122,15 @@ getCurrentAccount = do
 
 setCurrentAccount :: ID.WithID Account -> S.M LocalState E ()
 setCurrentAccount acc = do
-  mvar <- localAccount <$> S.getLocalState
-  liftIO $ MVar.tryPutMVar mvar acc >>= \case
+  ls <- S.getLocalState
+  ms <- liftIO . MVar.tryTakeMVar $ localStore ls
+  case ms of
+    Just _  -> liftIO . MVar.tryTakeMVar $ localNotifications ls
+    Nothing -> return Nothing
+  let la = localAccount ls
+  liftIO $ MVar.tryPutMVar la acc >>= \case
     True  -> return ()
-    False -> MVar.modifyMVar_ mvar $ const $ return acc
+    False -> MVar.modifyMVar_ la $ const $ return acc
 
 userExtIDIndex :: IndexMap.Field (ID.WithID User) UserExtID
 userExtIDIndex = IndexMap.field (view (ID.object . extID))
@@ -127,53 +158,69 @@ getAccounts u = do
 
 -- Stores
 
-accountStore :: ID.ID Account -> Stores -> IO (Stores, Store)
+accountStore :: ID.ID Account -> AccountStores -> IO (AccountStores, Store AccountS)
 accountStore i stores = case Map.lookup i stores of
   Just s  -> do
     -- putStrLn $ "Reusing store for: " ++ show a
     return (stores, s)
   Nothing -> do
     -- putStrLn $ "Initialising store for: " ++ show a
-    s <- initialiseAccount i
+    s <- initialiseStore i
     return (Map.insert i s stores, s)
 
-initialiseGlobal :: IO Store
+initialiseGlobal :: IO (Store GlobalS)
 initialiseGlobal = do
-  store <- T.filePersist "./runtime-data/data/global"
-  initialiseIndices store
-  return store
+  tc <- T.filePersist "./runtime-data/data/global"
+  initialiseIndices tc
+  let ns = GlobalNotifications
+  return $ Store tc ns GlobalEphemeral
  where
-  initialiseIndices :: Store -> IO ()
-  initialiseIndices store = do
-    T.index store (idIndex :: IdIndex Account)
-    T.index store (idIndex :: IdIndex User)
-    T.index store userExtIDIndex
-    T.index store accountIndex
-    T.index store roleUserIndex
+  initialiseIndices :: T.Persist -> IO ()
+  initialiseIndices p = do
+    T.index p (idIndex :: IdIndex Account)
+    T.index p (idIndex :: IdIndex User)
+    T.index p userExtIDIndex
+    T.index p accountIndex
+    T.index p roleUserIndex
 
-initialiseAccount :: ID.ID Account -> IO Store
-initialiseAccount account = do
-  store <- fileStore account
-  initialiseIndices store
-  return store
+initialiseStore :: ID.ID Account -> IO (Store AccountS)
+initialiseStore account = do
+  tc <- fileStore account
+  initialiseIndices tc
+  ns <- newAccountNotifications
+  eph <- newAccountEphemeral
+  return $ Store tc ns eph
  where
-  fileStore :: ID.ID Account -> IO Store
+  fileStore :: ID.ID Account -> IO T.Persist
   fileStore account = T.filePersist $
     "./runtime-data/data/" ++ accountPath account
 
   accountPath :: ID.ID Account -> String
   accountPath (ID.ID t) = "account/" ++ Text.unpack t
 
-  initialiseIndices :: Store -> IO ()
-  initialiseIndices store = do
-    T.index store (idIndex :: IdIndex (Decorated Question))
-    T.index store (idIndex :: IdIndex (Decorated Test))
-    T.index store questionIndex
-    T.index store questionLabelIndex
-    T.index store questionLabelTextIndex
+  initialiseIndices :: T.Persist -> IO ()
+  initialiseIndices p = do
+    T.index p (idIndex :: IdIndex (Decorated Question))
+    T.index p (idIndex :: IdIndex (Decorated Test))
+    T.index p questionIndex
+    T.index p questionLabelIndex
+    T.index p questionLabelTextIndex
 
-finalise :: Store -> IO ()
-finalise store = T.syncCache store
+finaliseStore :: Store t -> IO ()
+finaliseStore = T.syncCache . tcache
+
+-- Changes
+
+changeTests :: Changes (IDMap (Decorated Test)) -> DB ()
+changeTests = mapM_ go where
+  go (Ch.MapAdd i t)    = ID.addNew t >> return ()
+  go (Ch.MapDelete i)   = ID.refM i >>= ID.delete
+  go (Ch.MapModify i c) = overM ID._IDLens (Ch.apply c) i >> return ()
+changeQuestions :: Changes (IDMap (Decorated Question)) -> DB ()
+changeQuestions = mapM_ go where
+  go (Ch.MapAdd i t)    = ID.addNew t >> return ()
+  go (Ch.MapDelete i)   = ID.refM i >>= ID.delete
+  go (Ch.MapModify i c) = overM ID._IDLens (Ch.apply c) i >> return ()
 
 -- Indices
 
@@ -207,8 +254,8 @@ questionLabelIndex = IndexMap.fields
 type DB
   = T.DB
 
-run :: (MonadIO m) => Store -> DB a -> m a
-run s = liftIO . T.atomicallySync s . T.runDB s
+runIn :: (MonadIO m) => Store t -> DB a -> m a
+runIn s = liftIO . T.atomicallySync (tcache s) . T.runDB (tcache s)
 
 getAll :: forall a. (SC.SafeCopy a, Typeable a) => DB [ID.WithID a]
 getAll = do
@@ -225,28 +272,29 @@ instance MonadIO DB.DB where
 type M a
   = S.M LocalState E a
 
-runNotify :: State -> [Topic] -> DB a -> M a
-runNotify state topics d = do
-  user <- getCurrentUser state
-  aMVar <- localAccount <$> S.getLocalState
-  account <- liftIO $ MVar.readMVar aMVar
-  -- account <- case cAccount of
-  --   Just a  -> return a
-  --   Nothing -> S.except NoAccount
-    -- Nothing -> run (globalStore state)
-    --   (lookupDefaultAccount $ view ID._ID user) >>= \case
-    --     Just a  -> do
-    --       liftIO $ MVar.modifyMVar_ aMVar (const $ return $ Just a)
-    --       liftIO .atomically $ notify (Set.singleton CurrentAccount) state
-    --       return a
-    --     Nothing -> S.except NoAccount
-  store <- liftIO $ MVar.modifyMVar
-    (openStores state)
-    (accountStore $ view ID._ID account)
-  result <- run store d
-  -- liftIO . putStrLn $ "notifying: " ++ show topics
-  liftIO . atomically $ notify (Set.fromList topics) state
-  return result
+run :: State -> DB a -> M a
+run state d = do
+  store <- getStore state
+  runIn store d
+
+getStore :: State -> M (Store AccountS)
+getStore state = do
+  ls <- S.getLocalState
+  ms <- liftIO $ MVar.tryTakeMVar $ localStore ls
+  case ms of
+    -- We are already connected to the current store.
+    Just s  -> return s
+    -- We are not yet connected to the current store.
+    Nothing -> do
+      account <- liftIO $ MVar.readMVar (localAccount ls)
+      -- Open the store if necessary, and return it.
+      store <- liftIO $ MVar.modifyMVar
+        (openStores state)
+        (accountStore $ view ID._ID account)
+      liftIO $ MVar.tryPutMVar (localStore ls) store
+      lns <- liftIO . subscribeNotifications $ notifications store
+      liftIO $ MVar.tryPutMVar (localNotifications ls) lns
+      return store
 
 -- Storage
 
@@ -268,7 +316,6 @@ SC.deriveSafeCopy 0 'SC.base ''OrdPSQ.OrdPSQ
 SC.deriveSafeCopy 0 'SC.base ''OrdPSQ.Elem
 SC.deriveSafeCopy 0 'SC.base ''OrdPSQ.LTree
 SC.deriveSafeCopy 0 'SC.base ''TST.TST
-
 SC.deriveSafeCopy 0 'SC.base ''Privilege
 SC.deriveSafeCopy 0 'SC.base ''Role
 SC.deriveSafeCopy 0 'SC.base ''AutoAccounts

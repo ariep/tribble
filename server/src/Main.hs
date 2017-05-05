@@ -52,10 +52,10 @@ main = do
       bindPort = maybe port id $ config >>. (Proxy :: Proxy '["bind_port"])
   state <- initState
   withStorage $ \ storage -> do
-    (sessionState, static) <- setup config storage
-    app <- S.application
+    (loginLink, sessionState, static) <- setup config storage
+    app <- S.application state
       (S.Config sessionState host $ newLocalState state)
-      <$> Services.channels state
+      $ Services.channels loginLink
     Warp.runSettings
       (Warp.setPort bindPort Warp.defaultSettings)
       $ S.withWebSocketApp static app
@@ -70,7 +70,7 @@ withStorage = bracket
   (Acid.createCheckpointAndClose . Acid.acidState)
 
 setup :: Tagged Config -> Acid.AcidStorage SD ->
-  IO (Wai.State (Acid.AcidStorage SD), Wai.Application)
+  IO (Text.Text, Wai.State (Acid.AcidStorage SD), Wai.Application)
 setup config storage = do
   vaultKey <- Vault.newKey
   (sessionState, withSession) <- S.withServerSession vaultKey id storage
@@ -78,16 +78,17 @@ setup config storage = do
         (Text.unpack $ config >>. (Proxy :: Proxy '["oauth2","id"]))
         (Text.unpack $ config >>. (Proxy :: Proxy '["oauth2","secret"]))
         (show $ config >>. (Proxy :: Proxy '["host"]))
-  return . (,) sessionState
+      loginLink = Text.pack . show $ OAuth.loginRedirect oauth
+  return . (,,) loginLink sessionState
     $ dirOr "./runtime-data/upload/"
     $ dirOr "./runtime-data/download/"
     $ dirOr "./client/static/"
-    $ withSession . S.requireSession vaultKey oauth
+    $ withSession . S.requireSession vaultKey oauth (Proxy :: Proxy LocalState)
     $ Static.staticApp $ (serveDir "./client/js/")
         { Wai.ssIndices = [Wai.unsafeToPiece "index.html"]
         }
  where
-  serveDir = Static.defaultWebAppSettings 
+  serveDir = Static.defaultWebAppSettings
   fallback s a = s { Static.ss404Handler = Just a }
   dirOr dir or = Static.staticApp (serveDir dir `fallback` or)
 
@@ -95,6 +96,4 @@ initState :: IO State
 initState = do
   g <- DB.initialiseGlobal
   s <- MVar.newMVar Map.empty
-  n <- TChan.newBroadcastTChanIO
-  return $ State g s n
-
+  return $ State g s

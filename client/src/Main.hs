@@ -3,6 +3,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE OverloadedStrings #-}
 module Main where
 
 import           Accounts
@@ -19,8 +20,6 @@ import qualified Web.Channel.Client.Cache.ReadWrite as Cache
 import           Web.Widgets
 import qualified Web.Widgets.Modal  as Modal
 
-import           Control.Lens            (view)
-import           Control.Monad.IO.Class  (MonadIO, liftIO)
 import qualified Data.ID                  as ID
 import qualified Data.Map                 as Map
 import qualified Data.Set                 as Set
@@ -40,37 +39,40 @@ debug = True
 main :: IO ()
 main = mainWidgetWithHead headSection $ do
   server <- getWebsocketServer
-  liftIO . putStrLn $ "connecting to websocket server at: " ++ server
+  when debug $ liftIO . putStrLn $ "connecting to websocket server at: " ++ Text.unpack server
   Ch.runC debug server $ do
-    user <- holdDynInit (constDyn noUser) =<<
+    maybeUser <- (holdDyn Nothing =<<) . (fmap Just <$>) $
       Ch.get Components.currentUser
     mAccount <- holdDyn Nothing =<<
       (fmap Just <$> Ch.getMany Components.getCurrentAccount)
+    loginLink <- holdDyn "(login link not available)" =<<
+      Ch.get Components.loginLink
     accounts <- holdDyn [] =<< Ch.getMany Components.listAccounts
-    header user mAccount
-    forDynM_ mAccount $ \case
-      Nothing      -> do
-        pb <- getPostBuild
-        (Ch.sendMany Components.setCurrentAccount =<<) $ Modal.modal pb $
-          \ h b f () -> do
-            h . el "h3" $ text "In welke gebruikersgroep wil je werken?"
-            accountE <- b $ do
-              -- newAccountE <- newTest user
-              pickAccountE <- pickAccount accounts
-              return $ leftmost [pickAccountE]
-            -- cancel <- f $ buttonClass "btn btn-default" "Annuleer"
-            return (accountE, never)
-        return ()
-      Just account -> divClass "container" . divClass "row" $ mdo
-        questionCache <- Cache.createEmpty
-          (Ch.changeID Components.crudQuestions)
-        -- testCache <- Cache.createEmpty (Ch.changeID crudTests)
-        tests <- Ch.getDyn Components.allTests [] >>= mapDyn filterDeleted
-        currentTest <- divClass "col-md-7 col-lg-8" $
-          displayTest user tests questionCache
-        divClass "col-md-5 col-lg-4" $ questions user currentTest questionCache
-        return ()
+    void . dyn $ ffor maybeUser $ \case
+      Nothing   -> text "no user"
+      Just user -> do
+        header user mAccount loginLink
+        void . dyn $ ffor mAccount $ \case
+          Nothing      -> do
+            pb <- getPostBuild
+            (Ch.sendMany Components.setCurrentAccount =<<) $ Modal.modal pb $
+              \ h b f () -> do
+                h . el "h3" $ text "In welke gebruikersgroep wil je werken?"
+                accountE <- b $ do
+                  pickAccountE <- pickAccount accounts
+                  return $ leftmost [pickAccountE]
+                return (accountE, never)
+            return ()
+          Just account -> divClass "container" . divClass "row" $ mdo
+            qCache <- Cache.createIPP Components.ippQuestions
+            tCache <- Cache.createIPP Components.ippTests
+            -- TODO: use 'filterDeleted' around here somewhere
+            currentTest <- divClass "col-md-7 col-lg-8" $
+              displayTest user tCache qCache
+            divClass "col-md-5 col-lg-4" $ questions user currentTest tCache qCache
+            return ()
 
+headSection :: forall t m. (DomBuilder t m) => m ()
 headSection = do
   stylesheet
     "https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css"
@@ -79,18 +81,29 @@ headSection = do
   stylesheet s = elAttr "link"
     (Map.fromList [("rel", "stylesheet"), ("href", s)]) $ return ()
 
-header :: (MonadWidget t m) =>
-  CurrentUser t -> Dynamic t (Maybe (ID.WithID Account)) -> C t m ()
-header user account = elClass "nav" "navbar navbar-inverse" $ do
+header :: forall t m. (MonadWidget t m) =>
+  ID.WithID User -> Dynamic t (Maybe (ID.WithID Account)) -> Dynamic t Text -> C t m ()
+header user account loginLink = elClass "nav" "navbar navbar-inverse" $ do
   divClass "navbar-header" $ do
     elAttr "img" (Map.fromList [("src","logo_klein.png")]) blank
     linkClass "Tribble" "navbar-brand"
   divClass "navbar-right" $ do
     elClass "p" "navbar-text" $ do
-      dynText =<< mapDyn (Text.unpack . view (ID.object . userName)) user
+      showUser user
       el "br" blank
-      (dynText =<<) . forDyn account $ maybe "no account"
-        (Text.unpack . (\ (Account t) -> t) . view ID.object)
+      (dynText =<<) . forDyn account $ maybe ""
+        ((\ (Account t) -> t) . view ID.object)
+ where
+  showUser :: (MonadWidget t m) =>
+    ID.WithID User -> C t m ()
+  showUser wu
+    | view extID u == unregisteredExtID = do
+      attrs <- mapDyn (\ ll -> "href" =: ll) loginLink
+      elDynAttr "a" attrs (text "Inloggen")
+    | otherwise                         =
+        text $ view userName $ u
+   where
+    u = view ID.object wu :: User
 
-noUser :: ID.WithID User
-noUser = ID.WithID undefined $ User undefined (Text.pack "no user")
+-- noUser :: ID.WithID User
+-- noUser = ID.WithID undefined $ User undefined (Text.pack "no user")

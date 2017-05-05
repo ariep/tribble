@@ -4,17 +4,26 @@ v when deleting a question that is part of a test, the reference is not removed 
 v searching for words longer than the chop length gives no results
 v after creating a new question, or deleting a question, the question list is not updated
 v images in exports
+• "latex: no line here to end" when exporting "Rekenen wiskunde 1"
+• label suggested multiple times
+  · seems possible to add same label multiple times
+  · parts (words) of labels are suggested
+• indexing uses html-escaped text
+v switch to pure haskell icu equivalents:
+  · normalising: package 'unicode-transforms'
+  · character general category: package 'unicode-properties'
+  · breaking into words or characters: https://github.com/llelf/prose
 
 architecture
 v keep browser-local cache of questions:
   v server provides api to let client subscribe to changes
   · decide what to do when server pushes updates while we are editing
-  · maybe keep track on the server of editing mode, and show this to other users
-  · reflect changes in the cache right away, and send them to the server asynchronously
-    · the acid library or its model seems a good fit here
-    · provide UI to show asynchronous updates in progress
-• use the RW caching mechanism also for tests
+  v keep track on the server of editing mode, and show this to other users
+  v change websocket data model to be more incremental
+  · provide UI to show status while saving
+v use the RW caching mechanism also for tests
 • add (implicit?) exceptions to the client-server communication
+• move label indexing to client
 
 speeding up
 v measure time use of server vs. client
@@ -23,6 +32,9 @@ server optimisation
   · or get it directly from TCache
 client optimisation
 v use 'Data.Reflex.Dynamic.Demux' for the channel selection
+• make question cache less monolithic (separate dynamic per question):
+  current cache :: ID Question -> Dynamic (Maybe (WithID Question))
+• build text index incrementally, using ipp channel for questions
 
 interface
 v drag and drop questions in view mode, not edit mode
@@ -31,25 +43,52 @@ v limit search results to 25
 v renaming tests
 v new question button at bottom of test
 v deleting questions: only in question list edit mode
-• clone question: only in question list edit mode
+v widen big edit modal
+  v and decrease vertical space in all modal headers
+v less vertical space between multiple choice options in edit mode
+  v wider single line inputs
+v paginate list of questions
+• when entering a list (adding labels, adding multiple choice options),
+  add a new empty item when pressing enter
+  · also change the text of the new item button to "Nieuwe keuzemogelijkheid" for MC
+• strip trailing whitespace when entering label
+• when deleting a question, list tests that contain it
+  · and give the option to remove it from those tests
+• clone question button under "more options" button
+  · ask if we want to add it to the current test
 • resize answer text inputs automatically
+  · keep it as a single line input
+• labels should be on a single line
+• do not show account chooser when there is only a single account
+
+• when exporting, add spacing (using a paragraph?) between questions
+  · also filter out empty lines at the end of the question text
+• generated question titles: stop at word boundary, and add ellipsis sign
 • drag and drop: preview dragged element at new position
 • tooltips on buttons
 • create new text element in test
 v show account information below username
 • fix display of default choices in export modal
 • logout link
+• button/link to switch accounts
 • drag and drop questions from list to test
+• maybe create a special "add questions mode", with the list of all questions in a wide modal
 
 features
 v search term of multiple words
 v general search infrastructure for combining search terms and labels
 v save author of questions and tests
-• decide what to do when a new user logs in:
-  · create a user-specific account?
-  · connect to a test account?
-  · give the user a choice of the above, including asking to be added to an existing account?
+v when not logged in, show the test account, and show login link;
+v when logged in, do not show test account (depends on user roles)
+v automatically pick the test account when not logged in
+• case folding in text-index
+• when a user logs in that is not known to the system:
+  ask them for a text message, and send that to someone who can give them access to an account
 • web interface for user and account maintenance
+• when exporting, use test title instead of ID in suggested file name
+• debug mode
+• show question loading and indexing at startup
+• show last changes
 
 server
 • remove 'code=…' from URL after login
@@ -62,8 +101,24 @@ v create docker file
 v compression of ghcjs output (gives ~3MB js file)
 v use stack as a build tool for client and server
 • split up building of dependencies into fast-moving (plug) and slow-moving
-• check for existence of config file, client/static, runtime-data
-• fork pandoc to prevent future safecopy problems
-• look further at Wercker
-• loading indicator: Daan
+• check for existence of config.yaml, client/static, runtime-data
+• loading indicator
 
+architecture
+v pandoc is too big and has too many weird dependencies to run in the browser.
+  restrict its use to the server. We would need to send HTML instead of
+  Pandoc over the wire. Do so by making HTML the common type of the rich text content.
+  We would need to convert to pandoc just for the export step, which happens on the server.
+· check if lens can be removed from client dependencies
+• Data.Change has some problems:
+  v multiple changes in a (compound) data type are not supported (have to keep collection of changes instead)
+  · awkward to lift changes in inner type
+
+next
+v implement cache updates on server side
+v identify client connections in order to skip cache updates that originate from the current connection
+v new question
+v new test
+v think about how to integrate the addition of new tests and questions in the IPP mechanism:
+  we would like to view these as locally generated changes and propagate these together with the rest,
+  but the ID must be generated on the server, so this is not possible right now.

@@ -9,7 +9,6 @@ maintainer:          ariep@xs4all.nl
 -- copyright:           
 category:            Web
 build-type:          Simple
--- extra-source-files:  
 cabal-version:       >= 1.10
 
 executable tribble-server
@@ -29,9 +28,9 @@ executable tribble-server
     Imports
     Services
   build-depends:
-    base >= 4.8 && < 4.9
+    base >= 4.8 && < 4.10
     , acid-state >= 0.14 && < 0.15
-    , aeson >= 0.9 && < 0.11
+    , aeson >= 0.9 && < 0.12
     , base64-bytestring >= 1.0 && < 1.1
     , blaze-builder
     , bytestring
@@ -41,12 +40,12 @@ executable tribble-server
     , concurrent-extra >= 0.7 && < 0.8
     , cookie >= 0.4 && < 0.5
     , Coroutine >= 0.2 && < 0.3
-    , directory >= 1.2 && < 1.3
+    , directory >= 1.2.3 && < 1.3
     , hashable >= 1.2.3 && < 1.3
     , heredoc >= 0.2 && < 0.3
     , ID >= 0.1 && < 0.2
     , http-types
-    , lens >= 4.12 && < 4.14
+    , lens >= 4.12 && < 4.15
     , mtl >= 2.2 && < 2.3
     , network
     , network-uri >= 2.6 && < 2.7
@@ -66,8 +65,8 @@ executable tribble-server
     , TCache >= 0.14 && < 0.15
     , text >= 1.2 && < 1.3
     , text-index >= 0.2 && < 0.3
-    , time >= 1.5 && < 1.6
-    , transformers >= 0.4 && < 0.5
+    , time >= 1.5 && < 1.7
+    , transformers >= 0.4 && < 0.6
     , tst >= 0.1.1 && < 0.2
     , vault >= 0.3 && < 0.4
     , wai-session >= 0.3 && < 0.4
@@ -81,9 +80,11 @@ executable tribble-server
   hs-source-dirs:      src
   default-language:    Haskell2010
   default-extensions:
+    FlexibleContexts
     LambdaCase
     Rank2Types
     ScopedTypeVariables
+    TypeFamilies
 
 executable cli
   main-is:             CLI.hs
@@ -95,18 +96,20 @@ executable cli
     OldData
   -- other-extensions:    
   build-depends:
-    base >= 4.7 && < 4.9
+    base >= 4.7 && < 4.10
     , bytestring >= 0.10 && < 0.11
     , cereal >= 0.4 && < 0.6
+    , concurrent-extra >= 0.7 && < 0.8
     , console-program >= 0.4 && < 0.5
     , containers >= 0.5 && < 0.6
     , directory >= 1.2 && < 1.3
     , hashable >= 1.2.3 && < 1.3
     , ID >= 0.1 && < 0.2
-    , lens >= 4.12 && < 4.14
+    , lens >= 4.12 && < 4.15
     , mtl >= 2.2 && < 2.3
     , oauth2-google >= 0.1 && < 0.2
     , pandoc >= 1.16 && < 1.18
+    , plug-common >= 0.1 && < 0.2
     , plug-server >= 0.1 && < 0.2
     , psqueues >= 0.2 && < 0.3
     , random-shuffle >= 0.0 && < 0.1
@@ -115,8 +118,8 @@ executable cli
     , TCache >= 0.14 && < 0.15
     , text >= 1.2 && < 1.3
     , text-index >= 0.2 && < 0.3
-    , time >= 1.4 && < 1.6
-    , transformers >= 0.4 && < 0.5
+    , time >= 1.4 && < 1.7
+    , transformers >= 0.4 && < 0.6
     , tribble-common
     , tst >= 0.1.1 && < 0.2
   hs-source-dirs:      src
