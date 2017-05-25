@@ -28,10 +28,8 @@ import qualified Data.ID                  as ID
 import           Data.List               (find, findIndex, splitAt)
 import qualified Data.Map                 as Map
 import           Data.Maybe              (mapMaybe, catMaybes)
-import qualified Data.Search.Results      as Results
 import qualified Data.Set                 as Set
 import qualified Data.Text                as Text
-import qualified Data.Text.Index          as Index
 import           Reflex.Dom
 import           Reflex.Dom.Contrib.Widgets.Common
 import           Text.Printf             (printf)
@@ -44,47 +42,15 @@ questions user currentTest tCache qCache = divClass "panel panel-default" $ do
   questions <- divClass "panel-body" $ do
     qs <- do
       qFilter <- questionFilter
-      return $ filterQuestions qFilter qCache
-      -- qIDs <- Ch.sendManyReceipt Components.filterQuestions $ updated qFilter
-      -- afterBuildAsync $ do
-      --   (Ch.sendOnce_ Components.filterQuestions Nothing emptyFilter :: C t IO ())
+      qIDs <- Ch.sendManyReceipt Components.filterQuestions $ updated qFilter
+      afterBuildAsync $ do
+        (Ch.sendOnce_ Components.filterQuestions Nothing emptyFilter :: C t IO ())
+      holdDyn [] qIDs
     elClass "table" "table" . el "tbody" $ Paginate.paginate 20 qs $
       el "tr" . listQuestion currentTest tCache qCache
     return ()
   divClass "panel-footer" $ newQuestion user
   return ()
-
-filterQuestions :: forall t. (Reflex t) =>
-  Dynamic t QuestionFilter -> QuestionCache t ->
-  Dynamic t [(ID.WithID (Decorated Question), Index.Weight)]
-filterQuestions qFilter qCache = Cache.current qCache >>= \case
-  Nothing    -> pure []
-  Just cache -> qList cache (makeIndex cache) <$> qFilter
- where
-  qList :: IDMap (Decorated Question) -> Index.Index (ID.ID (Decorated Question)) ->
-    QuestionFilter -> [(ID.WithID (Decorated Question), Index.Weight)]
-  qList allQs ind qf = rightLabels . mapMaybe lookupQ $ textSearchResults
-   where
-    rightLabels = filter $ \ (q, _) ->
-      view labelFilter qf
-        `Set.isSubsetOf`
-      view (ID.object . authored . labels) q
-    lookupQ (i, w) = (\ q -> (q, w)) <$> Map.lookup i allQs
-    textSearchResults = case view searchText qf of
-      Nothing -> map (\ q -> (ID.__ID q, mempty)) $ Map.elems allQs
-      Just st -> map (\ (q, w, _) -> (q, w)) $ Results.toList $ Index.lookupPhrase ind st
-
-  makeIndex :: IDMap (Decorated Question) -> Index.Index (ID.ID (Decorated Question))
-  makeIndex = Map.foldrWithKey
-    (\ k dq -> Index.addDocumentParts k (toText dq))
-    Index.empty
-   where
-    toText :: ID.WithID (Decorated Question) -> [Text]
-    toText = g . view (ID.object . undecorated)
-     where
-      g q = renderPlain (view question q) : h (view answer q)
-      h (Open r) = [renderPlain r]
-      h m        = map (renderPlain . snd) (view choices m)
 
 questionFilter :: (MonadWidget t m) => Make t m QuestionFilter
 questionFilter = divClass "form-group" $ do
@@ -98,27 +64,30 @@ questionFilter = divClass "form-group" $ do
 
 listQuestion :: (MonadWidget t m, MonadIO (PushM t))
   => CurrentTest t -> TestCache t -> QuestionCache t
-  -> Dynamic t (ID.WithID (Decorated Question), Index.Weight)
+  -> Dynamic t (ID.ID (Decorated Question), Rational)
   -> C t m ()
-listQuestion currentTest tCache qCache dynQW = void . dyn $ ffor dynQW $ \ (q, w) -> do
-  let o = ID._object q
-  let i = ID.__ID q
-  let attrs = "style" =: weighedOpacity w
-  elAttr "td" attrs $ do
-    -- dynText =<< mapDyn ((<> " ") . Text.pack . show . snd) dynQW
-    text $ (view (undecorated . title . titleText)) o
-  elClass "td" "buttonRow" $ do
-    dyn $ ffor currentTest $ \case
-      Just t | not $ i `elem` toListOf
-        (ID.object . undecorated . elements . traverse . _TestQuestion) t -> do
-        addE <- buttonClassM "btn btn-primary btn-xs"
-          (elClass "span" "glyphicon glyphicon-plus" blank)
-        addQuestion currentTest tCache (addE $> view ID._ID q)
-      _ -> blank
-    buttonClassM "btn btn-default btn-xs"
-      (elClass "span" "glyphicon glyphicon-edit" blank)
-      >>= editQuestion qCache . fmap (const q)
-  blank
+listQuestion currentTest tCache qCache dynQW = void . dyn $ ffor dynQW $ \ (i, w) -> do
+  let maybeQ = (Map.lookup i =<<) <$> Cache.current qCache
+  void . dyn $ ffor maybeQ $ \case
+    Nothing -> text "Loading..."
+    Just q  -> do
+      let o = ID._object q
+      let attrs = "style" =: weighedOpacity w
+      elAttr "td" attrs $ do
+        -- dynText =<< mapDyn ((<> " ") . Text.pack . show . snd) dynQW
+        text $ (view (undecorated . title . titleText)) o
+      elClass "td" "buttonRow" $ do
+        dyn $ ffor currentTest $ \case
+          Just t | not $ i `elem` toListOf
+            (ID.object . undecorated . elements . traverse . _TestQuestion) t -> do
+            addE <- buttonClassM "btn btn-primary btn-xs"
+              (elClass "span" "glyphicon glyphicon-plus" blank)
+            addQuestion currentTest tCache (addE $> view ID._ID q)
+          _ -> blank
+        buttonClassM "btn btn-default btn-xs"
+          (elClass "span" "glyphicon glyphicon-edit" blank)
+          >>= editQuestion qCache . fmap (const q)
+      blank
 
 addQuestion :: (MonadWidget t m) =>
    CurrentTest t -> TestCache t -> Event t (ID.ID (Decorated Question)) -> C t m ()
@@ -172,8 +141,10 @@ editQuestion questions open = do
         Cache.update questions (deleteChange <$ e)
         return e
 
-weighedOpacity :: Index.Weight -> Text
-weighedOpacity = ("opacity: " <>) . Text.pack . printf "%.2f" .
+weighedOpacity :: Rational -> Text
+weighedOpacity = ("opacity: " <>) . Text.pack . printf "%.2f" . toDouble .
   (+ (1 / 4)) . (* (3 / 4)) . (^ 2) . toUnitInterval
  where
-  toUnitInterval = max 0 . (1 -) . (/ 10) . Index.toDouble
+  toUnitInterval = max 0 . (1 -) . (/ 10)
+  toDouble :: Rational -> Double
+  toDouble = fromRational

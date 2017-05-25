@@ -13,6 +13,7 @@ v switch to pure haskell icu equivalents:
   · normalising: package 'unicode-transforms'
   · character general category: package 'unicode-properties'
   · breaking into words or characters: https://github.com/llelf/prose
+v client-side text indexing takes too long, so switch back to server-based searching
 
 architecture
 v keep browser-local cache of questions:

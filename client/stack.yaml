@@ -26,23 +26,6 @@ packages:
     git: https://github.com/ariep/ID.git
     commit: 489623f74274dd360519726ea3358a65f5dfa811
   extra-dep: true
-- location:
-    git: https://github.com/ariep/text-index.git
-    commit: 8f4453c088a786af89ef4a6079476d58add9b1ed
-  extra-dep: true
-- location:
-    git: https://github.com/ariep/language-spelling.git
-    commit: 98936c01f0fc0baf35b24e9ae975a5d808123aa3
-  subdirs: [tst]
-  extra-dep: true
-- location:
-    git: https://github.com/ariep/psqueues.git
-    commit: 1b9d87511bce9f5a3e4db6fa46a43dc03a965308
-  extra-dep: true
-- location:
-    git: https://github.com/llelf/prose.git
-    commit: ee32bef5cc7af41265ede92406943a5e2a60d530
-  extra-dep: true
 # reflex-platform:
 - location:
     git: https://github.com/reflex-frp/reflex
@@ -65,12 +48,9 @@ packages:
 
 extra-deps:
   - cereal-text-0.1.0.2
-  # for prose
-  - data-list-sequences-0.1
   - ghcjs-dom-0.2.4.0
   - prim-uniq-0.1.0.1
   - ref-tf-0.4.0.1
   - string-conv-0.1.1
   - jsaddle-0.8.3.1
-  - unicode-properties-3.2.0.0
   - zenc-0.1.1
